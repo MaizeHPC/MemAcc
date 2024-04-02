@@ -1,12 +1,10 @@
 #include "PassDetails.h"
-
 #include "MemAcc/Dialect.h"
-#include "MemAcc/Ops.h"
+#include "MemAcc/Passes/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "polygeist/Passes/Passes.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 
@@ -25,8 +23,8 @@
 #define DEBUG_TYPE "memory-access-generation"
 
 using namespace mlir;
+using namespace mlir::MemAcc;
 using namespace mlir::arith;
-using namespace polygeist;
 using namespace mlir::affine;
 // Define the data structures at the beginning of your pass
 
@@ -331,8 +329,8 @@ void MemAccGenPass::runOnOperation() {
 } // end anonymous namespace
 
 namespace mlir {
-namespace polygeist {
-std::unique_ptr<Pass> mlir::polygeist::createMemAccGenPass() {
+namespace MemAcc {
+std::unique_ptr<Pass> mlir::MemAcc::createMemAccGenPass() {
   return std::make_unique<MemAccGenPass>();
 }
 } // namespace polygeist

@@ -33,6 +33,7 @@
 #include "polygeist/Dialect.h"
 #include "MemAcc/Dialect.h"
 #include "polygeist/Passes/Passes.h"
+#include "MemAcc/Passes/Passes.h"
 
 using namespace mlir;
 
@@ -65,6 +66,7 @@ int main(int argc, char **argv) {
   registry.insert<DLTIDialect>();
 
   mlir::registerpolygeistPasses();
+  mlir::registermemaccPasses();
   mlir::func::registerInlinerExtension(registry);
 
   // Register the standard passes we want.
