@@ -10,10 +10,11 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 
+// #define DEBUG
 #ifdef DEBUG
-  #define PRINT(x) llvm::errs() << x << "\n"
+#define PRINT(x) llvm::errs() << x << "\n"
 #else
-  #define PRINT(x)
+#define PRINT(x)
 #endif
 
 // Use LLVM's data structures for convenience and performance
@@ -184,43 +185,32 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
       rewriter.eraseOp(indirectLoadUseChain[i]);
     }
 
+    // Update external users & generate return values
+    int res_idx = 0;
     for (auto &I : *block) {
       bool hasExternalUses = false;
-      for (auto U : I.getUsers()) {
+      SmallVector<Operation *, 4> users{I.getUsers().begin(),
+                                        I.getUsers().end()};
+      for (auto U : users) {
+        // PRINT("In populateGenericLoadOp, User: for " << I << " is " << *U);
         if (block != U->getBlock()) {
           hasExternalUses = true;
-          break;
-        }
-      }
-      if (hasExternalUses) {
-        resultVals.push_back(I.getResult(0));
-      }
-    }
-    return resultVals;
-  }
-
-  void updateExternelUses(MemAcc::GenericLoadOp genericLoadOp) const {
-    // Update uses of inner-block values
-    auto block = &genericLoadOp.getBody().getBlocks().front();
-    int idx = 0;
-    for (auto &I : *block) {
-      bool hasExternalUses = false;
-      for (auto U : I.getUsers()) {
-        if (block != U->getBlock()) {
           for (unsigned int operandIndex = 0;
                operandIndex < U->getNumOperands(); ++operandIndex) {
             if (U->getOperand(operandIndex) == I.getResult(0)) {
               // Update the operand with a new value
-              U->setOperand(operandIndex, genericLoadOp->getResult(idx));
+              U->setOperand(operandIndex, genericLoadOp->getResult(res_idx));
               hasExternalUses = true;
             }
           } // for
         }   // if
-      }
+      } // for
       if (hasExternalUses) {
-        idx++;
+        res_idx++;
+        resultVals.push_back(I.getResult(0));
       }
-    }
+    } // for
+    return resultVals;
   }
 
   LogicalResult matchAndRewrite(LoadOpType loadOp,
@@ -263,14 +253,11 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
         loc, resultTypes, indirectionAttr);
 
     // Populate the GenericLoadOp with the operations from the
-    // indirectLoadUseChain
+    // indirectLoadUseChain & update use-def chain for external users
     resultVals =
         populateGenericLoadOp(indirectLoadUseChain, rewriter, genericLoadOp);
 
     rewriter.create<MemAcc::YieldOp>(loc, resultTypes, resultVals);
-
-    // Update uses of inner-block values
-    updateExternelUses(genericLoadOp);
 
     return success();
   }
