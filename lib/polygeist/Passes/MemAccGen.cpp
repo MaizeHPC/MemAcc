@@ -213,7 +213,6 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
               // Update the operand with a new value
               U->setOperand(operandIndex, genericLoadOp->getResult(idx));
               hasExternalUses = true;
-              break; // Break after updating the operand
             }
           } // for
         }   // if

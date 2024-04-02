@@ -1,3 +1,10 @@
+## Test MemAcc Pass Instructions
+1. Refer to the [Build instructions](#build-instructions) to build Polygeist.
+2. Run the following command to test the MemAcc pass:
+```sh
+cd test
+```
+
 ## Build instructions
 
 ### Requirements 
