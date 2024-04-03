@@ -8,12 +8,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 
-// #define DEBUG
-#ifdef DEBUG
-#define PRINT(x) llvm::errs() << x << "\n"
-#else
-#define PRINT(x)
-#endif
+
 
 // Use LLVM's data structures for convenience and performance
 #include "llvm/ADT/DenseMap.h"
@@ -321,5 +316,5 @@ namespace MemAcc {
 std::unique_ptr<Pass> mlir::MemAcc::createMemAccGenPass() {
   return std::make_unique<MemAccGenPass>();
 }
-} // namespace polygeist
+} // namespace MemAcc
 } // namespace mlir

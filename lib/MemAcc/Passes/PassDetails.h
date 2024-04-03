@@ -21,6 +21,13 @@
 #include "MemAcc/Ops.h"
 #include "MemAcc/Passes/Passes.h"
 
+// #define DEBUG
+#ifdef DEBUG
+#define PRINT(x) llvm::errs() << x << "\n"
+#else
+#define PRINT(x)
+#endif
+
 namespace mlir {
 class FunctionOpInterface;
 // Forward declaration from Dialect.h

@@ -11,6 +11,7 @@ class RewritePatternSet;
 class DominanceInfo;
 namespace MemAcc{
 std::unique_ptr<Pass> createMemAccGenPass();
+std::unique_ptr<Pass> createMemAccHoistLoadsPass();
 }
 }
 

@@ -12,4 +12,12 @@ def MemAccGen : Pass<"memory-access-generation"> {
   ];
 }
 
+def MemAccHoistLoads : Pass<"memory-access-hoist-loads"> {
+  let summary = "hoist indirect loads out of loops into scatter or gather operations";
+  let constructor = "mlir::MemAcc::createMemAccHoistLoadsPass()";
+  let dependentDialects = [
+    "MemAcc::MemAccDialect",
+  ];
+}
+
 #endif // MEMACC_PASSES
