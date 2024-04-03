@@ -47,18 +47,6 @@ static void postProcessDeepestLoads() {
   }
 }
 
-// Utility function to create a MemAcc::YieldOp
-static void createMemAccYieldOp(PatternRewriter &rewriter, mlir::Location loc) {
-
-  // Specify empty result types and operands for the yield operation
-  mlir::TypeRange resultTypes;                     // No return types
-  mlir::ValueRange operands;                       // No operands
-  llvm::ArrayRef<mlir::NamedAttribute> attributes; // No attributes
-
-  // Finally, build and insert the operation into the IR
-  rewriter.create<MemAcc::YieldOp>(loc, resultTypes, operands, attributes);
-}
-
 // These unary op legalizations are identical for floating-point
 // or quantized types
 template <typename SrcOpType, typename DestOpType>
@@ -313,7 +301,7 @@ void MemAccGenPass::runOnOperation() {
 
 namespace mlir {
 namespace MemAcc {
-std::unique_ptr<Pass> mlir::MemAcc::createMemAccGenPass() {
+std::unique_ptr<Pass> createMemAccGenPass() {
   return std::make_unique<MemAccGenPass>();
 }
 } // namespace MemAcc

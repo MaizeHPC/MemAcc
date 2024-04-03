@@ -63,6 +63,71 @@ bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
 // PackedGenericLoadOp
 //===----------------------------------------------------------------------===//
 
+/// 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
+/// bodyBuilder are empty/null, we include default terminator op.
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
+                        ValueRange outputs,
+                        ValueRange lbOperands, AffineMap lbMap,
+                        ValueRange ubOperands, AffineMap ubMap, int64_t step,
+                        ValueRange iterArgs, BodyBuilderFn bodyBuilder) {
+  assert(((!lbMap && lbOperands.empty()) ||
+          lbOperands.size() == lbMap.getNumInputs()) &&
+         "lower bound operand count does not match the affine map");
+  assert(((!ubMap && ubOperands.empty()) ||
+          ubOperands.size() == ubMap.getNumInputs()) &&
+         "upper bound operand count does not match the affine map");
+  assert(step > 0 && "step has to be a positive integer constant");
+
+  for (Value val : iterArgs)
+    result.addTypes(val.getType());
+
+  // Add an attribute for the step.
+  result.addAttribute(getStepAttrStrName(),
+                      builder.getIntegerAttr(builder.getIndexType(), step));
+  // Add the outputs.
+  result.addOperands(outputs);
+
+  // Add the lower bound.
+  result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
+  result.addOperands(lbOperands);
+
+  // Add the upper bound.
+  result.addAttribute(getUpperBoundAttrStrName(), AffineMapAttr::get(ubMap));
+  result.addOperands(ubOperands);
+
+  result.addOperands(iterArgs);
+  // Create a region and a block for the body.  The argument of the region is
+  // the loop induction variable.
+  Region *bodyRegion = result.addRegion();
+  bodyRegion->push_back(new Block);
+  Block &bodyBlock = bodyRegion->front();
+  Value inductionVar =
+      bodyBlock.addArgument(builder.getIndexType(), result.location);
+  for (Value val : iterArgs)
+    bodyBlock.addArgument(val.getType(), val.getLoc());
+
+  // Create the default terminator if the builder is not provided and if the
+  // iteration arguments are not provided. Otherwise, leave this to the caller
+  // because we don't know which values to return from the loop.
+  if (iterArgs.empty() && !bodyBuilder) {
+    assert(false && "not implemented");
+  } else if (bodyBuilder) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&bodyBlock);
+    bodyBuilder(builder, result.location, inductionVar,
+                bodyBlock.getArguments().drop_front());
+  }
+}
+
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
+                        int64_t ub, int64_t step, ValueRange iterArgs,
+                        BodyBuilderFn bodyBuilder) {
+  auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
+  auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
+  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs,
+               bodyBuilder);
+}
+
 FailureOr<LoopLikeOpInterface> PackedGenericLoadOp::replaceWithAdditionalYields(
     RewriterBase &rewriter, ValueRange newInitOperands,
     bool replaceInitOperandUsesInLoop,
@@ -168,4 +233,13 @@ std::optional<OpFoldResult> PackedGenericLoadOp::getSingleLowerBound() {
     return std::nullopt;
   OpBuilder b(getContext());
   return OpFoldResult(b.getI64IntegerAttr(getConstantLowerBound()));
+}
+
+//===----------------------------------------------------------------------===//
+// AllocOp 
+//===----------------------------------------------------------------------===//
+
+void AllocSPDOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn) {
+  setNameFn(getResult(), "alloc_spd");
 }

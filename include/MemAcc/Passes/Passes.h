@@ -3,6 +3,7 @@
 
 #include "MemAcc/Dialect.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Pass/Pass.h"
 #include <memory>
 
 namespace mlir {

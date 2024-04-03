@@ -604,4 +604,135 @@ def MemAcc_IndexCastOp
   // let hasCanonicalizer = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// AllocLikeOp
+//===----------------------------------------------------------------------===//
+
+// Base class for memref allocating ops: alloca and alloc.
+//
+//   %0 = alloclike(%m)[%s] : memref<8x?xf32, affine_map<(d0, d1)[s0] -> (d0 + s0, d1)>>
+//
+class AllocLikeOp<string mnemonic,
+                  Resource resource,
+                  list<Trait> traits = []> :
+    MemAcc_Op<mnemonic,
+    !listconcat([
+      AttrSizedOperandSegments
+    ], traits)> {
+
+  let arguments = (ins Variadic<Index>:$dynamicSizes,
+                       // The symbolic operands (the ones in square brackets)
+                       // bind to the symbols of the memref's layout map.
+                       Variadic<Index>:$symbolOperands,
+                       ConfinedAttr<OptionalAttr<I64Attr>,
+                                [IntMinValue<0>]>:$alignment);
+  let results = (outs Res<AnyMemRef, "", [MemAlloc<resource>]>:$memref);
+
+  let builders = [
+    OpBuilder<(ins "MemRefType":$memrefType,
+                  CArg<"IntegerAttr", "IntegerAttr()">:$alignment), [{
+      return build($_builder, $_state, memrefType, {}, alignment);
+    }]>,
+    OpBuilder<(ins "MemRefType":$memrefType, "ValueRange":$dynamicSizes,
+                  CArg<"IntegerAttr", "IntegerAttr()">:$alignment), [{
+      return build($_builder, $_state, memrefType, dynamicSizes, {}, alignment);
+    }]>,
+    OpBuilder<(ins "MemRefType":$memrefType, "ValueRange":$dynamicSizes,
+                  "ValueRange":$symbolOperands,
+                  CArg<"IntegerAttr", "{}">:$alignment), [{
+      $_state.types.push_back(memrefType);
+      $_state.addOperands(dynamicSizes);
+      $_state.addOperands(symbolOperands);
+      $_state.addAttribute(getOperandSegmentSizeAttr(),
+          $_builder.getDenseI32ArrayAttr({
+              static_cast<int32_t>(dynamicSizes.size()),
+              static_cast<int32_t>(symbolOperands.size())}));
+      if (alignment)
+        $_state.addAttribute(getAlignmentAttrStrName(), alignment);
+    }]>,
+    OpBuilder<(ins "ArrayRef<OpFoldResult>":$sizes, "Type":$elementType,
+                   CArg<"Attribute", "{}">:$memorySpace), [{
+      SmallVector<int64_t> staticShape;
+      SmallVector<Value> dynamicSizes;
+      dispatchIndexOpFoldResults(sizes, dynamicSizes, staticShape);
+      MemRefLayoutAttrInterface layout;
+      MemRefType memrefType = MemRefType::get(staticShape, elementType, layout,
+                                              memorySpace);
+      return build($_builder, $_state, memrefType, dynamicSizes);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    static StringRef getAlignmentAttrStrName() { return "alignment"; }
+
+    MemRefType getType() { return ::llvm::cast<MemRefType>(getResult().getType()); }
+
+    SmallVector<OpFoldResult> getMixedSizes() {
+      SmallVector<OpFoldResult> result;
+      unsigned ctr = 0;
+      OpBuilder b(getContext());
+      for (int64_t i = 0, e = getType().getRank(); i < e; ++i) {
+        if (getType().isDynamicDim(i)) {
+          result.push_back(getDynamicSizes()[ctr++]);
+        } else {
+          result.push_back(b.getIndexAttr(getType().getShape()[i]));
+        }
+      }
+      return result;
+    }
+  }];
+
+  let assemblyFormat = [{
+    `(`$dynamicSizes`)` (`` `[` $symbolOperands^ `]`)? attr-dict `:` type($memref)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// AllocOp
+//===----------------------------------------------------------------------===//
+
+def MemAcc_AllocSPDOp : AllocLikeOp<"alloc_spd", DefaultResource, [
+    DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>]> {
+  let summary = "memory allocation operation";
+  let description = [{
+    The `alloc` operation allocates a region of memory, as specified by its
+    memref type.
+
+    Example:
+
+    ```mlir
+    %0 = memacc.alloc_spd() : memref<8x64xf32, 1>
+    ```
+
+    The optional list of dimension operands are bound to the dynamic dimensions
+    specified in its memref type. In the example below, the ssa value '%d' is
+    bound to the second dimension of the memref (which is dynamic).
+
+    ```mlir
+    %0 = memacc.alloc_spd(%d) : memref<8x?xf32, 1>
+    ```
+
+    The optional list of symbol operands are bound to the symbols of the
+    memrefs affine map. In the example below, the ssa value '%s' is bound to
+    the symbol 's0' in the affine map specified in the allocs memref type.
+
+    ```mlir
+    %0 = memacc.alloc_spd()[%s] : memref<8x64xf32,
+                              affine_map<(d0, d1)[s0] -> ((d0 + s0), d1)>, 1>
+    ```
+
+    This operation returns a single ssa value of memref type, which can be used
+    by subsequent load and store operations.
+
+    The optional `alignment` attribute may be specified to ensure that the
+    region of memory that will be indexed is aligned at the specified byte
+    boundary.
+
+    ```mlir
+    %0 = memacc.alloc_spd()[%s] {alignment = 8} :
+      memref<8x64xf32, affine_map<(d0, d1)[s0] -> ((d0 + s0), d1)>, 1>
+    ```
+  }];
+}
+
 #endif // MemAcc_OPS
