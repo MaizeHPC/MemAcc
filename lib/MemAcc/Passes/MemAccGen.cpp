@@ -112,28 +112,8 @@ struct StoreOpConversionPattern : public OpRewritePattern<StoreOpType> {
     if (!storeOp->template getParentOfType<AffineForOp>()) {
       return failure();
     }
-    if (storeOp->template getParentOfType<MemAcc::GenericStoreOp>()) {
-      rewriteStoreOp(storeOp, rewriter);
-      return success();
-    }
 
-    // Create the new MemAcc::GenericStoreOp, wrapping the original store
-    // operation
-    Location loc = storeOp.getLoc();
-    auto genericStoreOp = rewriter.create<MemAcc::GenericStoreOp>(
-        loc /* other necessary parameters */);
-
-    // Insert the original store operation into the body of the new
-    // GenericStoreOp This assumes your GenericStoreOp has a region that can
-    // contain the storeOp
-    auto &region = genericStoreOp.getBody();
-    auto *block = rewriter.createBlock(&region);
-
-    // Remove the original store operation
-    storeOp.getOperation()->moveBefore(block, block->end());
-
-    createMemAccYieldOp(rewriter, loc);
-
+    rewriteStoreOp(storeOp, rewriter);
     return success();
   }
 };
@@ -226,14 +206,9 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     if (deepestLoads.count(loadOp) == 0) {
       return failure();
     }
-    SmallVector<Value, 4> resultVals;
-    auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
 
-    // get result types of generic load op
-    auto resultTypes = getGenericLoadOpResultTypes(loadOp);
-    // Count the number of loads in the indirectLoadUseChain for indirection
-    // level
     uint64_t indirectionLevel = 0;
+    auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
     // Calculate the indirection level based on the number of loads in the
     // indirectLoadUseChain
     for (Operation *op : indirectLoadUseChain) {
@@ -241,6 +216,19 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
         indirectionLevel++;
       }
     }
+
+    // If there is no indirection, return failure
+    if (indirectionLevel < 1){
+      return failure();
+    }
+
+    SmallVector<Value, 4> resultVals;
+
+    // get result types of generic load op
+    auto resultTypes = getGenericLoadOpResultTypes(loadOp);
+    // Count the number of loads in the indirectLoadUseChain for indirection
+    // level
+
     auto indirectionAttr = IntegerAttr::get(
         IntegerType::get(rewriter.getContext(), 64), indirectionLevel - 1);
 
