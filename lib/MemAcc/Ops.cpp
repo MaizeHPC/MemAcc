@@ -1,7 +1,7 @@
 #include "MemAcc/Ops.h"
 #include "mlir/IR/TypeUtilities.h"
 using namespace mlir;
-// using namespace MemAcc;
+using namespace MemAcc;
 #include "MemAcc/Dialect.h"
 
 #define GET_OP_CLASSES
@@ -57,4 +57,189 @@ static bool areIndexCastCompatible(TypeRange inputs, TypeRange outputs) {
 bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
                                             TypeRange outputs) {
   return areIndexCastCompatible(inputs, outputs);
+}
+
+//===----------------------------------------------------------------------===//
+// PackedGenericLoadOp
+//===----------------------------------------------------------------------===//
+
+/// 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
+/// bodyBuilder are empty/null, we include default terminator op.
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
+                        ValueRange outputs,
+                        ValueRange lbOperands, AffineMap lbMap,
+                        ValueRange ubOperands, AffineMap ubMap, int64_t step,
+                        ValueRange iterArgs, BodyBuilderFn bodyBuilder) {
+  assert(((!lbMap && lbOperands.empty()) ||
+          lbOperands.size() == lbMap.getNumInputs()) &&
+         "lower bound operand count does not match the affine map");
+  assert(((!ubMap && ubOperands.empty()) ||
+          ubOperands.size() == ubMap.getNumInputs()) &&
+         "upper bound operand count does not match the affine map");
+  assert(step > 0 && "step has to be a positive integer constant");
+
+  for (Value val : iterArgs)
+    result.addTypes(val.getType());
+
+  // Add an attribute for the step.
+  result.addAttribute(getStepAttrStrName(),
+                      builder.getIntegerAttr(builder.getIndexType(), step));
+  // Add the outputs.
+  result.addOperands(outputs);
+
+  // Add the lower bound.
+  result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
+  result.addOperands(lbOperands);
+
+  // Add the upper bound.
+  result.addAttribute(getUpperBoundAttrStrName(), AffineMapAttr::get(ubMap));
+  result.addOperands(ubOperands);
+
+  result.addOperands(iterArgs);
+  // Create a region and a block for the body.  The argument of the region is
+  // the loop induction variable.
+  Region *bodyRegion = result.addRegion();
+  bodyRegion->push_back(new Block);
+  Block &bodyBlock = bodyRegion->front();
+  Value inductionVar =
+      bodyBlock.addArgument(builder.getIndexType(), result.location);
+  for (Value val : iterArgs)
+    bodyBlock.addArgument(val.getType(), val.getLoc());
+
+  // Create the default terminator if the builder is not provided and if the
+  // iteration arguments are not provided. Otherwise, leave this to the caller
+  // because we don't know which values to return from the loop.
+  if (iterArgs.empty() && !bodyBuilder) {
+    assert(false && "not implemented");
+  } else if (bodyBuilder) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&bodyBlock);
+    bodyBuilder(builder, result.location, inductionVar,
+                bodyBlock.getArguments().drop_front());
+  }
+}
+
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
+                        int64_t ub, int64_t step, ValueRange iterArgs,
+                        BodyBuilderFn bodyBuilder) {
+  auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
+  auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
+  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs,
+               bodyBuilder);
+}
+
+FailureOr<LoopLikeOpInterface> PackedGenericLoadOp::replaceWithAdditionalYields(
+    RewriterBase &rewriter, ValueRange newInitOperands,
+    bool replaceInitOperandUsesInLoop,
+    const NewYieldValuesFn &newYieldValuesFn) {
+
+  assert(false && "not implemented");
+  return failure();
+}
+
+void PackedGenericLoadOp::setLowerBound(ValueRange lbOperands, AffineMap map) {
+  assert(lbOperands.size() == map.getNumInputs());
+  assert(map.getNumResults() >= 1 && "bound map has at least one result");
+
+  SmallVector<Value, 4> newOperands(lbOperands.begin(), lbOperands.end());
+
+  auto ubOperands = getUpperBoundOperands();
+  newOperands.append(ubOperands.begin(), ubOperands.end());
+  auto iterOperands = getInits();
+  newOperands.append(iterOperands.begin(), iterOperands.end());
+  (*this)->setOperands(newOperands);
+
+  (*this)->setAttr(getLowerBoundAttrStrName(), AffineMapAttr::get(map));
+}
+
+void PackedGenericLoadOp::setUpperBound(ValueRange ubOperands, AffineMap map) {
+  assert(ubOperands.size() == map.getNumInputs());
+  assert(map.getNumResults() >= 1 && "bound map has at least one result");
+
+  SmallVector<Value, 4> newOperands(getLowerBoundOperands());
+  newOperands.append(ubOperands.begin(), ubOperands.end());
+  auto iterOperands = getInits();
+  newOperands.append(iterOperands.begin(), iterOperands.end());
+  (*this)->setOperands(newOperands);
+
+  (*this)->setAttr(getUpperBoundAttrStrName(), AffineMapAttr::get(map));
+}
+
+bool PackedGenericLoadOp::hasConstantLowerBound() {
+  return getLowerBoundMap().isSingleConstant();
+}
+
+bool PackedGenericLoadOp::hasConstantUpperBound() {
+  return getUpperBoundMap().isSingleConstant();
+}
+
+int64_t PackedGenericLoadOp::getConstantLowerBound() {
+  return getLowerBoundMap().getSingleConstantResult();
+}
+
+int64_t PackedGenericLoadOp::getConstantUpperBound() {
+  return getUpperBoundMap().getSingleConstantResult();
+}
+
+void PackedGenericLoadOp::setConstantLowerBound(int64_t value) {
+  setLowerBound({}, AffineMap::getConstantMap(value, getContext()));
+}
+
+void PackedGenericLoadOp::setConstantUpperBound(int64_t value) {
+  setUpperBound({}, AffineMap::getConstantMap(value, getContext()));
+}
+
+PackedGenericLoadOp::operand_range PackedGenericLoadOp::getControlOperands() {
+  return {operand_begin(), operand_begin() + getLowerBoundOperands().size() +
+                               getUpperBoundOperands().size()};
+}
+
+bool PackedGenericLoadOp::matchingBoundOperandList() {
+  auto lbMap = getLowerBoundMap();
+  auto ubMap = getUpperBoundMap();
+  if (lbMap.getNumDims() != ubMap.getNumDims() ||
+      lbMap.getNumSymbols() != ubMap.getNumSymbols())
+    return false;
+
+  unsigned numOperands = lbMap.getNumInputs();
+  for (unsigned i = 0, e = lbMap.getNumInputs(); i < e; i++) {
+    // Compare Value 's.
+    if (getOperand(i) != getOperand(numOperands + i))
+      return false;
+  }
+  return true;
+}
+
+std::optional<OpFoldResult> PackedGenericLoadOp::getSingleStep() {
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getStepAsAPInt()));
+}
+
+std::optional<OpFoldResult> PackedGenericLoadOp::getSingleUpperBound() {
+  if (!hasConstantUpperBound())
+    return std::nullopt;
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getConstantUpperBound()));
+}
+
+SmallVector<Region *> PackedGenericLoadOp::getLoopRegions() { return {&getBody()}; }
+
+std::optional<Value> PackedGenericLoadOp::getSingleInductionVar() {
+  return getInductionVar();
+}
+
+std::optional<OpFoldResult> PackedGenericLoadOp::getSingleLowerBound() {
+  if (!hasConstantLowerBound())
+    return std::nullopt;
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getConstantLowerBound()));
+}
+
+//===----------------------------------------------------------------------===//
+// AllocOp 
+//===----------------------------------------------------------------------===//
+
+void AllocSPDOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn) {
+  setNameFn(getResult(), "alloc_spd");
 }

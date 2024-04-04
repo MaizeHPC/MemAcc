@@ -21,8 +21,177 @@ include "mlir/Interfaces/ShapedOpInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/Interfaces/InferIntRangeInterface.td"
+include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/BuiltinAttributes.td"  // This includes the definition for IntegerAttr and others
+
+
+//===----------------------------------------------------------------------===//
+// packed op outside of loops
+//===----------------------------------------------------------------------===//
+def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
+    [AttrSizedOperandSegments, AutomaticAllocationScope, 
+    DeclareOpInterfaceMethods<LoopLikeOpInterface,
+     ["getSingleInductionVar", "getSingleLowerBound", "getSingleStep",
+      "getSingleUpperBound", "getYieldedValuesMutable",
+      "replaceWithAdditionalYields"]>]>{
+  let summary = "Defines a generic gather pattern (will be outside of loops)";
+  let description = [{
+    The `MemAcc.packed_generic_load` operation is designed to encapsulate any
+    arbitrary load access pattern, including stride, indirect, and other
+    patterns. It will be transformed from a `MemAcc.generic_load` operation inside of
+    affine.for. It takes indices array and data array as input, and it will allocate a 
+    scratchpad buffer to store the loaded data. 
+
+    Example:
+
+    ```mlir
+    affine.for %arg5 = 0 to %1 {
+      %3 = memacc.generic_load region {
+        %5 = memacc.load %arg2[%arg5] : memref<?xi32>
+        %6 = memacc.index_cast %5 : i32 to index
+        %7 = memacc.load %arg1[%6] : memref<?xf64>
+        %8 = memacc.yield %7 : (f64) -> f64
+      } indirection_level = 1 : () -> f64
+      memacc.store %3, %arg0[%arg5] : memref<?xf64>
+    }
+    ```
+
+    will be transformed into
+
+    ```mlir
+    %4 = memacc.spd_allocate %1 : memref<?xf64>
+    memacc.packed_generic_load %arg4 = 0 to %1  outs(%4 : memref<?xf64>) {
+        %i = memref.load %arg2[%arg4] : memref<?xi32>
+        %idx = memacc.index_cast %i : i32 to index
+        %5 = memref.load %arg1[%idx] : memref<?xf64>
+        memacc.yield %5 : f64
+    }
+    affine.for %arg5 = 0 to %1 {
+      %3 = memacc.load %4[%arg5] : memref<?xf64>
+      memacc.store %3, %arg0[%arg5] : memref<?xf64>
+    }
+    ```
+  }];
+
+  let arguments = (ins Variadic<AnyShaped>:$outputs,
+                       Variadic<Index>:$lowerBoundOperands,
+                       Variadic<Index>:$upperBoundOperands,
+                       Variadic<AnyType>:$inits,
+                       AffineMapAttr:$lowerBoundMap,
+                       AffineMapAttr:$upperBoundMap,
+                       IndexAttr:$step);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$body);
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "ValueRange":$outputs,"int64_t":$lowerBound, "int64_t":$upperBound,
+      CArg<"int64_t", "1">:$step, CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
+           "nullptr">:$bodyBuilder)>,
+    OpBuilder<(ins "ValueRange":$outputs,"ValueRange":$lbOperands, "AffineMap":$lbMap,
+      "ValueRange":$ubOperands, "AffineMap":$ubMap, CArg<"int64_t", "1">:$step,
+      CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
+           "nullptr">:$bodyBuilder)>
+  ];
+
+    let extraClassDeclaration = [{
+    /// Defining the function type we use for building the body of affine.for.
+    using BodyBuilderFn =
+        function_ref<void(OpBuilder &, Location, Value, ValueRange)>;
+
+    static StringRef getStepAttrStrName() { return "step"; }
+    static StringRef getLowerBoundAttrStrName() { return "lower_bound"; }
+    static StringRef getUpperBoundAttrStrName() { return "upper_bound"; }
+
+    BlockArgument getInductionVar() { return getBody().getArgument(0); }
+    Block::BlockArgListType getRegionIterArgs() {
+      return getBody().getArguments().drop_front();
+    }
+
+    // TODO: provide iterators for the lower and upper bound operands
+    // if the current access via getLowerBound(), getUpperBound() is too slow.
+
+    /// Returns operands for the lower and upper bound maps with the operands
+    /// for the lower bound map in front of those for the upper bound map.
+    operand_range getControlOperands();
+
+    /// Set lower bound. The new bound must have the same number of operands as
+    /// the current bound map. Otherwise, 'replaceForLowerBound' should be used.
+    void setLowerBound(ValueRange operands, AffineMap map);
+    /// Set upper bound. The new bound must not have more operands than the
+    /// current bound map. Otherwise, 'replaceForUpperBound' should be used.
+    void setUpperBound(ValueRange operands, AffineMap map);
+
+
+    /// Returns information about the lower bound as a single object.
+    affine::AffineBound getLowerBound();
+
+    /// Returns information about the upper bound as a single object.
+    affine::AffineBound getUpperBound();
+
+    /// Returns loop step.
+    int64_t getStepAsAPInt() {
+      return ::llvm::cast<IntegerAttr>(*(*this)->getInherentAttr(getStepAttrStrName())).getInt();
+    }
+
+    /// Set loop step.
+    void setStep(int64_t step) {
+      assert(step > 0 && "step has to be a positive integer constant");
+      auto *context = getLowerBoundMap().getContext();
+      (*this)->setAttr(StringAttr::get(context, getStepAttrStrName()),
+                       IntegerAttr::get(IndexType::get(context), step));
+    }
+
+    /// Returns number of region arguments for loop-carried values.
+    unsigned getNumRegionIterArgs() {
+      return getBody().getNumArguments() - 1;
+    }
+
+    /// Number of operands controlling the loop: lb and ub.
+    unsigned getNumControlOperands() { return getOperation()->getNumOperands() - getNumIterOperands(); }
+
+    /// Get the number of loop-carried values.
+    unsigned getNumIterOperands();
+
+    /// Returns true if the lower bound is constant.
+    bool hasConstantLowerBound();
+    /// Returns true if the upper bound is constant.
+    bool hasConstantUpperBound();
+    /// Returns true if both bounds are constant.
+    bool hasConstantBounds() {
+      return hasConstantLowerBound() && hasConstantUpperBound();
+    }
+    /// Returns the value of the constant lower bound.
+    /// Fails assertion if the bound is non-constant.
+    int64_t getConstantLowerBound();
+    /// Returns the value of the constant upper bound. The upper bound is
+    /// exclusive. Fails assertion if the bound is non-constant.
+    int64_t getConstantUpperBound();
+    /// Sets the lower bound to the given constant value.
+    void setConstantLowerBound(int64_t value);
+    /// Sets the upper bound to the given constant value.
+    void setConstantUpperBound(int64_t value);
+
+    /// Returns true if both the lower and upper bound have the same operand
+    /// lists (same operands in the same order).
+    bool matchingBoundOperandList();
+  }];
+
+  let assemblyFormat = [{
+    `memacc.packed_generic_load` `(` $outputs `)` `(` $lowerBoundOperands `,`
+    $upperBoundOperands `,` $inits `)` `(` $lowerBoundMap `,` $upperBoundMap `,`
+    $step `)` `:` 
+    `region` $body attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+
+//===----------------------------------------------------------------------===//
+// generic op inside of loops
+//===----------------------------------------------------------------------===//
 
 def MemAcc_GenericStoreOp : MemAcc_Op<"generic_store"> {
   let summary = "Defines a generic memory access pattern.";
@@ -433,6 +602,137 @@ def MemAcc_IndexCastOp
 
   // let hasFolder = 1;
   // let hasCanonicalizer = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// AllocLikeOp
+//===----------------------------------------------------------------------===//
+
+// Base class for memref allocating ops: alloca and alloc.
+//
+//   %0 = alloclike(%m)[%s] : memref<8x?xf32, affine_map<(d0, d1)[s0] -> (d0 + s0, d1)>>
+//
+class AllocLikeOp<string mnemonic,
+                  Resource resource,
+                  list<Trait> traits = []> :
+    MemAcc_Op<mnemonic,
+    !listconcat([
+      AttrSizedOperandSegments
+    ], traits)> {
+
+  let arguments = (ins Variadic<Index>:$dynamicSizes,
+                       // The symbolic operands (the ones in square brackets)
+                       // bind to the symbols of the memref's layout map.
+                       Variadic<Index>:$symbolOperands,
+                       ConfinedAttr<OptionalAttr<I64Attr>,
+                                [IntMinValue<0>]>:$alignment);
+  let results = (outs Res<AnyMemRef, "", [MemAlloc<resource>]>:$memref);
+
+  let builders = [
+    OpBuilder<(ins "MemRefType":$memrefType,
+                  CArg<"IntegerAttr", "IntegerAttr()">:$alignment), [{
+      return build($_builder, $_state, memrefType, {}, alignment);
+    }]>,
+    OpBuilder<(ins "MemRefType":$memrefType, "ValueRange":$dynamicSizes,
+                  CArg<"IntegerAttr", "IntegerAttr()">:$alignment), [{
+      return build($_builder, $_state, memrefType, dynamicSizes, {}, alignment);
+    }]>,
+    OpBuilder<(ins "MemRefType":$memrefType, "ValueRange":$dynamicSizes,
+                  "ValueRange":$symbolOperands,
+                  CArg<"IntegerAttr", "{}">:$alignment), [{
+      $_state.types.push_back(memrefType);
+      $_state.addOperands(dynamicSizes);
+      $_state.addOperands(symbolOperands);
+      $_state.addAttribute(getOperandSegmentSizeAttr(),
+          $_builder.getDenseI32ArrayAttr({
+              static_cast<int32_t>(dynamicSizes.size()),
+              static_cast<int32_t>(symbolOperands.size())}));
+      if (alignment)
+        $_state.addAttribute(getAlignmentAttrStrName(), alignment);
+    }]>,
+    OpBuilder<(ins "ArrayRef<OpFoldResult>":$sizes, "Type":$elementType,
+                   CArg<"Attribute", "{}">:$memorySpace), [{
+      SmallVector<int64_t> staticShape;
+      SmallVector<Value> dynamicSizes;
+      dispatchIndexOpFoldResults(sizes, dynamicSizes, staticShape);
+      MemRefLayoutAttrInterface layout;
+      MemRefType memrefType = MemRefType::get(staticShape, elementType, layout,
+                                              memorySpace);
+      return build($_builder, $_state, memrefType, dynamicSizes);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    static StringRef getAlignmentAttrStrName() { return "alignment"; }
+
+    MemRefType getType() { return ::llvm::cast<MemRefType>(getResult().getType()); }
+
+    SmallVector<OpFoldResult> getMixedSizes() {
+      SmallVector<OpFoldResult> result;
+      unsigned ctr = 0;
+      OpBuilder b(getContext());
+      for (int64_t i = 0, e = getType().getRank(); i < e; ++i) {
+        if (getType().isDynamicDim(i)) {
+          result.push_back(getDynamicSizes()[ctr++]);
+        } else {
+          result.push_back(b.getIndexAttr(getType().getShape()[i]));
+        }
+      }
+      return result;
+    }
+  }];
+
+  let assemblyFormat = [{
+    `(`$dynamicSizes`)` (`` `[` $symbolOperands^ `]`)? attr-dict `:` type($memref)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// AllocOp
+//===----------------------------------------------------------------------===//
+
+def MemAcc_AllocSPDOp : AllocLikeOp<"alloc_spd", DefaultResource, [
+    DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>]> {
+  let summary = "memory allocation operation";
+  let description = [{
+    The `alloc` operation allocates a region of memory, as specified by its
+    memref type.
+
+    Example:
+
+    ```mlir
+    %0 = memacc.alloc_spd() : memref<8x64xf32, 1>
+    ```
+
+    The optional list of dimension operands are bound to the dynamic dimensions
+    specified in its memref type. In the example below, the ssa value '%d' is
+    bound to the second dimension of the memref (which is dynamic).
+
+    ```mlir
+    %0 = memacc.alloc_spd(%d) : memref<8x?xf32, 1>
+    ```
+
+    The optional list of symbol operands are bound to the symbols of the
+    memrefs affine map. In the example below, the ssa value '%s' is bound to
+    the symbol 's0' in the affine map specified in the allocs memref type.
+
+    ```mlir
+    %0 = memacc.alloc_spd()[%s] : memref<8x64xf32,
+                              affine_map<(d0, d1)[s0] -> ((d0 + s0), d1)>, 1>
+    ```
+
+    This operation returns a single ssa value of memref type, which can be used
+    by subsequent load and store operations.
+
+    The optional `alignment` attribute may be specified to ensure that the
+    region of memory that will be indexed is aligned at the specified byte
+    boundary.
+
+    ```mlir
+    %0 = memacc.alloc_spd()[%s] {alignment = 8} :
+      memref<8x64xf32, affine_map<(d0, d1)[s0] -> ((d0 + s0), d1)>, 1>
+    ```
+  }];
 }
 
 #endif // MemAcc_OPS

@@ -1,21 +1,14 @@
 #include "PassDetails.h"
-
 #include "MemAcc/Dialect.h"
-#include "MemAcc/Ops.h"
+#include "MemAcc/Passes/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "polygeist/Passes/Passes.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 
-// #define DEBUG
-#ifdef DEBUG
-#define PRINT(x) llvm::errs() << x << "\n"
-#else
-#define PRINT(x)
-#endif
+
 
 // Use LLVM's data structures for convenience and performance
 #include "llvm/ADT/DenseMap.h"
@@ -25,8 +18,8 @@
 #define DEBUG_TYPE "memory-access-generation"
 
 using namespace mlir;
+using namespace mlir::MemAcc;
 using namespace mlir::arith;
-using namespace polygeist;
 using namespace mlir::affine;
 // Define the data structures at the beginning of your pass
 
@@ -52,18 +45,6 @@ static void postProcessDeepestLoads() {
       }
     }
   }
-}
-
-// Utility function to create a MemAcc::YieldOp
-static void createMemAccYieldOp(PatternRewriter &rewriter, mlir::Location loc) {
-
-  // Specify empty result types and operands for the yield operation
-  mlir::TypeRange resultTypes;                     // No return types
-  mlir::ValueRange operands;                       // No operands
-  llvm::ArrayRef<mlir::NamedAttribute> attributes; // No attributes
-
-  // Finally, build and insert the operation into the IR
-  rewriter.create<MemAcc::YieldOp>(loc, resultTypes, operands, attributes);
 }
 
 // These unary op legalizations are identical for floating-point
@@ -114,28 +95,8 @@ struct StoreOpConversionPattern : public OpRewritePattern<StoreOpType> {
     if (!storeOp->template getParentOfType<AffineForOp>()) {
       return failure();
     }
-    if (storeOp->template getParentOfType<MemAcc::GenericStoreOp>()) {
-      rewriteStoreOp(storeOp, rewriter);
-      return success();
-    }
 
-    // Create the new MemAcc::GenericStoreOp, wrapping the original store
-    // operation
-    Location loc = storeOp.getLoc();
-    auto genericStoreOp = rewriter.create<MemAcc::GenericStoreOp>(
-        loc /* other necessary parameters */);
-
-    // Insert the original store operation into the body of the new
-    // GenericStoreOp This assumes your GenericStoreOp has a region that can
-    // contain the storeOp
-    auto &region = genericStoreOp.getBody();
-    auto *block = rewriter.createBlock(&region);
-
-    // Remove the original store operation
-    storeOp.getOperation()->moveBefore(block, block->end());
-
-    createMemAccYieldOp(rewriter, loc);
-
+    rewriteStoreOp(storeOp, rewriter);
     return success();
   }
 };
@@ -228,14 +189,9 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     if (deepestLoads.count(loadOp) == 0) {
       return failure();
     }
-    SmallVector<Value, 4> resultVals;
-    auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
 
-    // get result types of generic load op
-    auto resultTypes = getGenericLoadOpResultTypes(loadOp);
-    // Count the number of loads in the indirectLoadUseChain for indirection
-    // level
     uint64_t indirectionLevel = 0;
+    auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
     // Calculate the indirection level based on the number of loads in the
     // indirectLoadUseChain
     for (Operation *op : indirectLoadUseChain) {
@@ -243,6 +199,19 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
         indirectionLevel++;
       }
     }
+
+    // If there is no indirection, return failure
+    if (indirectionLevel < 1){
+      return failure();
+    }
+
+    SmallVector<Value, 4> resultVals;
+
+    // get result types of generic load op
+    auto resultTypes = getGenericLoadOpResultTypes(loadOp);
+    // Count the number of loads in the indirectLoadUseChain for indirection
+    // level
+
     auto indirectionAttr = IntegerAttr::get(
         IntegerType::get(rewriter.getContext(), 64), indirectionLevel - 1);
 
@@ -331,9 +300,9 @@ void MemAccGenPass::runOnOperation() {
 } // end anonymous namespace
 
 namespace mlir {
-namespace polygeist {
-std::unique_ptr<Pass> mlir::polygeist::createMemAccGenPass() {
+namespace MemAcc {
+std::unique_ptr<Pass> createMemAccGenPass() {
   return std::make_unique<MemAccGenPass>();
 }
-} // namespace polygeist
+} // namespace MemAcc
 } // namespace mlir
