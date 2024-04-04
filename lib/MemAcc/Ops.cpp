@@ -1,5 +1,6 @@
 #include "MemAcc/Ops.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/OpDefinition.h"
 using namespace mlir;
 using namespace MemAcc;
 #include "MemAcc/Dialect.h"
@@ -96,6 +97,13 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   result.addOperands(ubOperands);
 
   result.addOperands(iterArgs);
+
+  result.addAttribute("operandSegmentSizes",
+                      builder.getDenseI32ArrayAttr(
+                          {static_cast<int32_t>(outputs.size()),
+                           static_cast<int32_t>(lbOperands.size()),
+                           static_cast<int32_t>(ubOperands.size()),
+                           static_cast<int32_t>(iterArgs.size())}));
   // Create a region and a block for the body.  The argument of the region is
   // the loop induction variable.
   Region *bodyRegion = result.addRegion();
@@ -109,14 +117,14 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   // Create the default terminator if the builder is not provided and if the
   // iteration arguments are not provided. Otherwise, leave this to the caller
   // because we don't know which values to return from the loop.
-  if (iterArgs.empty() && !bodyBuilder) {
-    assert(false && "not implemented");
-  } else if (bodyBuilder) {
-    OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToStart(&bodyBlock);
-    bodyBuilder(builder, result.location, inductionVar,
-                bodyBlock.getArguments().drop_front());
-  }
+  // if (iterArgs.empty() && !bodyBuilder) {
+  //   ensureTerminator(*bodyRegion, builder, result.location);
+  // } else if (bodyBuilder) {
+  //   OpBuilder::InsertionGuard guard(builder);
+  //   builder.setInsertionPointToStart(&bodyBlock);
+  //   bodyBuilder(builder, result.location, inductionVar,
+  //               bodyBlock.getArguments().drop_front());
+  // }
 }
 
 void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,

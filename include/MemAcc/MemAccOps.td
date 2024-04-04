@@ -47,13 +47,16 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
 
     ```mlir
     affine.for %arg5 = 0 to %1 {
-      %3 = memacc.generic_load region {
-        %5 = memacc.load %arg2[%arg5] : memref<?xi32>
-        %6 = memacc.index_cast %5 : i32 to index
-        %7 = memacc.load %arg1[%6] : memref<?xf64>
-        %8 = memacc.yield %7 : (f64) -> f64
-      } indirection_level = 1 : () -> f64
-      memacc.store %3, %arg0[%arg5] : memref<?xf64>
+      // %3 = memacc.generic_load region {
+      //   %5 = memacc.load %arg2[%arg5] : memref<?xi32>
+      //   %6 = memacc.index_cast %5 : i32 to index
+      //   %7 = memacc.load %arg1[%6] : memref<?xf64>
+      //   %8 = memacc.yield %7 : (f64) -> f64
+      // } indirection_level = 1 : () -> f64
+
+      compute(%3)
+      %5 = memacc.load %arg2[%arg5] : memref<?xi32> idx[i]
+      memacc.store %3, %arg0[%5] : memref<?xf64> store a[idx[i]]
     }
     ```
 
@@ -61,10 +64,10 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
 
     ```mlir
     %4 = memacc.spd_allocate %1 : memref<?xf64>
-    memacc.packed_generic_load %arg4 = 0 to %1  outs(%4 : memref<?xf64>) {
-        %i = memref.load %arg2[%arg4] : memref<?xi32>
-        %idx = memacc.index_cast %i : i32 to index
-        %5 = memref.load %arg1[%idx] : memref<?xf64>
+    memacc.packed_generic_load %i = 0 to %1  outs(%4 : memref<?xf64>) {
+        %idx = memref.load %arg2[%i] : memref<?xi32>
+        %idx_ = memacc.index_cast %idx : i32 to index
+        %5 = memref.load %arg1[%idx_] : memref<?xf64>
         memacc.yield %5 : f64
     }
     affine.for %arg5 = 0 to %1 {
@@ -103,8 +106,8 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
         function_ref<void(OpBuilder &, Location, Value, ValueRange)>;
 
     static StringRef getStepAttrStrName() { return "step"; }
-    static StringRef getLowerBoundAttrStrName() { return "lower_bound"; }
-    static StringRef getUpperBoundAttrStrName() { return "upper_bound"; }
+    static StringRef getLowerBoundAttrStrName() { return "lowerBoundMap"; }
+    static StringRef getUpperBoundAttrStrName() { return "upperBoundMap"; }
 
     BlockArgument getInductionVar() { return getBody().getArgument(0); }
     Block::BlockArgListType getRegionIterArgs() {
@@ -181,7 +184,7 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
   }];
 
   let assemblyFormat = [{
-    `memacc.packed_generic_load` `(` $outputs `)` `(` $lowerBoundOperands `,`
+    `outs` `(` $outputs `)` `range` `(` $lowerBoundOperands `,`
     $upperBoundOperands `,` $inits `)` `(` $lowerBoundMap `,` $upperBoundMap `,`
     $step `)` `:` 
     `region` $body attr-dict `:` functional-type(operands, results)
