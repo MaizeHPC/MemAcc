@@ -4,6 +4,7 @@
 #include "MemAcc/Dialect.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include <memory>
 
 namespace mlir {
@@ -13,6 +14,10 @@ class DominanceInfo;
 namespace MemAcc{
 std::unique_ptr<Pass> createMemAccGenPass();
 std::unique_ptr<Pass> createMemAccHoistLoadsPass();
+
+// TODO: a test pass lowering memacc to llvm; it should first lower to target-aware IR then to LLVM
+// should fix later
+std::unique_ptr<Pass> createTestMemAccToLLVMPass();
 }
 }
 
@@ -24,22 +29,6 @@ void registerDialect(DialectRegistry &registry);
 namespace arith {
 class ArithDialect;
 } // end namespace arith
-
-namespace omp {
-class OpenMPDialect;
-} // end namespace omp
-
-namespace polygeist {
-class PolygeistDialect;
-} // end namespace polygeist
-
-namespace scf {
-class SCFDialect;
-} // end namespace scf
-
-namespace cf {
-class ControlFlowDialect;
-} // end namespace cf
 
 namespace math {
 class MathDialect;
