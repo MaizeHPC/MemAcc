@@ -183,12 +183,14 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
     bool matchingBoundOperandList();
   }];
 
-  let assemblyFormat = [{
-    `outs` `(` $outputs `)` `range` `(` $lowerBoundOperands `,`
-    $upperBoundOperands `,` $inits `)` `(` $lowerBoundMap `,` $upperBoundMap `,`
-    $step `)` `:` 
-    `region` $body attr-dict `:` functional-type(operands, results)
-  }];
+  // let assemblyFormat = (ins Variadic<AnyShaped>:$outputs,
+  //                     Variadic<Index>:$lowerBoundOperands,
+  //                     Variadic<Index>:$upperBoundOperands,
+  //                     Variadic<AnyType>:$inits,
+  //                     AffineMapAttr:$lowerBoundMap,
+  //                     AffineMapAttr:$upperBoundMap,
+  //                     IndexAttr:$step),
+  //                    (outs Variadic<AnyType>:$results);
 }
 
 
