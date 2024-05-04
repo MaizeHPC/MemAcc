@@ -123,7 +123,7 @@ public:
     // generate memacc.load ops for each alloc_spd
     // SmallVector<Value, 4> load_ops;
     for (unsigned int i = 0; i < op.getNumResults(); i++) {
-      auto load_op = rewriter.create<MemAcc::LoadOp>(
+      auto load_op = rewriter.create<memref::LoadOp>(
           op.getLoc(), alloc_spds[i], ValueRange({originalInductionVar}));
       op->getResult(i).replaceAllUsesWith(load_op);
       // load_ops.push_back(load_op);

@@ -282,8 +282,8 @@ void MemAccGenPass::runOnOperation() {
 
   // context->loadDialect<mlir::MemAcc::MemAccDialect>();
   mlir::RewritePatternSet patterns(context);
-  patterns.add<StoreOpConversionPattern<memref::StoreOp>>(context);
-  patterns.add<StoreOpConversionPattern<affine::AffineStoreOp>>(context);
+  // patterns.add<StoreOpConversionPattern<memref::StoreOp>>(context);
+  // patterns.add<StoreOpConversionPattern<affine::AffineStoreOp>>(context);
   patterns.add<LoadOpConversionPattern<memref::LoadOp>>(context);
   patterns.add<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
   patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(
