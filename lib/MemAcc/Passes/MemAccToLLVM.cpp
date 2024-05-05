@@ -89,16 +89,16 @@ namespace {
     options.useOpaquePointers = false;
     LLVMTypeConverter converter(&getContext(), options, &dataLayoutAnalysis);
     // // TODO: figure out whether to use C-style memref descriptor or not later
-    // bool useCStyleMemRef = true;
-    // if (useCStyleMemRef) {
-    //   converter.addConversion([&](MemRefType type) -> std::optional<Type> {
-    //     auto elTy = convertMemrefElementTypeForLLVMPointer(type, converter);
-    //     if (!elTy)
-    //       return Type();
-    //     return LLVM::LLVMPointerType::get(type.getContext(),
-    //                                       type.getMemorySpaceAsInt());
-    //   });
-    // }
+    bool useCStyleMemRef = true;
+    if (useCStyleMemRef) {
+      converter.addConversion([&](MemRefType type) -> std::optional<Type> {
+        auto elTy = convertMemrefElementTypeForLLVMPointer(type, converter);
+        if (!elTy)
+          return Type();
+        return LLVM::LLVMPointerType::get(type.getContext(),
+                                          type.getMemorySpaceAsInt());
+      });
+    }
     LLVMConversionTarget target(getContext());
     target.addIllegalOp<AllocSPDOp>();
     mlir::RewritePatternSet patterns(&getContext());

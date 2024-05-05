@@ -83,7 +83,8 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
                        Variadic<AnyType>:$inits,
                        AffineMapAttr:$lowerBoundMap,
                        AffineMapAttr:$upperBoundMap,
-                       IndexAttr:$step);
+                       IndexAttr:$step,
+                       I64Attr:$indirectionLevel);
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$body);
 
@@ -91,11 +92,13 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
   let builders = [
     OpBuilder<(ins "ValueRange":$outputs,"int64_t":$lowerBound, "int64_t":$upperBound,
       CArg<"int64_t", "1">:$step, CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"int64_t", "0">:$indirectionLevel,
       CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
            "nullptr">:$bodyBuilder)>,
     OpBuilder<(ins "ValueRange":$outputs,"ValueRange":$lbOperands, "AffineMap":$lbMap,
       "ValueRange":$ubOperands, "AffineMap":$ubMap, CArg<"int64_t", "1">:$step,
       CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"int64_t", "0">:$indirectionLevel,
       CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
            "nullptr">:$bodyBuilder)>
   ];
@@ -105,6 +108,7 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
     using BodyBuilderFn =
         function_ref<void(OpBuilder &, Location, Value, ValueRange)>;
 
+    static StringRef getIndirectionLevelAttrStrName() { return "indirectionLevel"; }
     static StringRef getStepAttrStrName() { return "step"; }
     static StringRef getLowerBoundAttrStrName() { return "lowerBoundMap"; }
     static StringRef getUpperBoundAttrStrName() { return "upperBoundMap"; }

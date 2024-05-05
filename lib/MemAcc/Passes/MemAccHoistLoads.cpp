@@ -75,12 +75,14 @@ public:
           op.getLoc(), memRefType, ValueRange({loop_length})));
     }
 
+    auto indirection_level = op.getIndirectionLevel().value();
+
     llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
     // Create PackedGenericLoadOp outside of the loop
     auto packedLoadOp = rewriter.create<PackedGenericLoadOp>(
         op.getLoc(), ValueRange{alloc_spds_ref}, forOp.getLowerBoundOperands(),
         forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
-        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits());
+        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(), indirection_level);
 
     // for each instruction in GenericLoadOp, clone them into
     // PackedGenericLoadOp, replace all users of AffineForOp's induction

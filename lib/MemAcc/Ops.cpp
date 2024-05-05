@@ -64,13 +64,13 @@ bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
 // PackedGenericLoadOp
 //===----------------------------------------------------------------------===//
 
-/// 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
-/// bodyBuilder are empty/null, we include default terminator op.
+// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
+// / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
                         ValueRange outputs,
                         ValueRange lbOperands, AffineMap lbMap,
                         ValueRange ubOperands, AffineMap ubMap, int64_t step,
-                        ValueRange iterArgs, BodyBuilderFn bodyBuilder) {
+                        ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
   assert(((!lbMap && lbOperands.empty()) ||
           lbOperands.size() == lbMap.getNumInputs()) &&
          "lower bound operand count does not match the affine map");
@@ -81,6 +81,10 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
 
   for (Value val : iterArgs)
     result.addTypes(val.getType());
+
+  auto indirection_level_attr = IntegerAttr::get(
+    IntegerType::get(builder.getContext(), 64), indirection_level);
+  result.addAttribute(getIndirectionLevelAttrStrName(), indirection_level_attr);
 
   // Add an attribute for the step.
   result.addAttribute(getStepAttrStrName(),
@@ -128,11 +132,11 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
 }
 
 void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
-                        int64_t ub, int64_t step, ValueRange iterArgs,
+                        int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
                         BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs,
+  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
                bodyBuilder);
 }
 
