@@ -35,6 +35,100 @@ struct MemAccToLLVMPass
 } // end namespace.
 
 namespace{
+
+static Value traceIntegerType(Value size, ConversionPatternRewriter &rewriter) {
+  auto intType = rewriter.getI64Type();
+  // Check if the type is already i64
+  if (size.getType().isa<IntegerType>() && size.getType().cast<IntegerType>().getWidth() == 64) {
+    return size;
+  } else {
+    // Trace back the origin of the size if it's not an i64
+    if (auto castOp = size.getDefiningOp<UnrealizedConversionCastOp>()) {
+      Value original = castOp.getOperand(0);
+      // Check if the original value is of i64 type
+      if (original.getType().isa<IntegerType>() && original.getType().cast<IntegerType>().getWidth() == 64) {
+        return original;
+      } else {
+        // If still not i64, add a cast to i64, this is a fallback and might not be semantically correct
+        auto castedSize = rewriter.create<LLVM::SExtOp>(size.getLoc(), intType, original);
+        return castedSize;
+      }
+    } else {
+      // If we can't trace back to a cast operation, we cast directly here (fallback)
+      auto castedSize = rewriter.create<LLVM::SExtOp>(size.getLoc(), intType, size);
+      return castedSize;
+    }
+  }
+}
+
+class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericLoadOp> {
+  using ConvertOpToLLVMPattern<PackedGenericLoadOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(PackedGenericLoadOp load, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    /*
+    "memacc.packed_generic_load"(%alloc_spd, %0) <{indirectionLevel = 1 : i64, lowerBoundMap = #map, operandSegmentSizes = array<i32: 1, 0, 1, 0>, step = 1 : index, upperBoundMap = #map1}> ({
+      ^bb0(%arg4: index):
+        %1 = memacc.load %arg2[%arg4] : memref<?xi32>
+        %2 = memacc.index_cast %1 : i32 to index
+        %3 = memacc.load %arg1[%2] : memref<?xf64>
+        %4 = memacc.yield %3 : (f64) -> f64
+      }) : (memref<?xf64>, index) -> ()
+
+      will be transformed into
+
+      "llvm.maa.setloopbound"(0, %0)
+      "llvm.maa.setloopstep"(1)
+      "llvm.maa.setindirectionlevel"(1)
+      "llvm.maa.setdataptr(%arg2)" // set the data pointer for indices
+      "llvm.maa.setspdptr(%arg1)" // set the data pointer for final data that would be stored into spd
+    */
+
+    auto loc = load.getLoc();
+
+    //now assuming only one operand is used for lower bound and upper bound
+    //TODO: Consider more complicated cases where affine map is non-trivial
+    int constLowerBound = 0;
+    Value lowerBound;
+    if (load.hasConstantLowerBound()){
+      constLowerBound = load.getConstantLowerBound();
+      // create llvm constant for lower bound
+      lowerBound = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
+        rewriter.getIntegerAttr(rewriter.getI64Type(), constLowerBound));
+    } else {
+      lowerBound = load.getLowerBoundOperands()[0];
+    }
+
+    int constUpperBound = 0;
+    Value upperBound;
+    if (load.hasConstantUpperBound()){
+      constUpperBound = load.getConstantUpperBound();
+      // create llvm constant for upper bound
+      upperBound = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
+        rewriter.getIntegerAttr(rewriter.getI64Type(), constUpperBound));
+    } else {
+      upperBound = load.getUpperBoundOperands()[0];;
+    }
+    
+    //set loop bound
+    rewriter.create<LLVM::MAA_SetLoopBoundOp>(loc, lowerBound, upperBound);
+
+    //set step size
+    auto step = load.getStepAsAPInt();
+    auto stepAttr = IntegerAttr::get(
+        IntegerType::get(rewriter.getContext(), 32), step);
+    rewriter.create<LLVM::MAA_SetLoopStepOp>(loc, step);
+
+    //set indirection level
+    auto indirectionLevel = load.getIndirectionLevel();
+    rewriter.create<LLVM::MAA_SetIndirectLevelOp>(loc, indirectionLevel);
+
+    rewriter.eraseOp(load);
+    return success();
+  }
+};
+
 class AllocSPDOpLowering : public ConvertOpToLLVMPattern<AllocSPDOp> {
   using ConvertOpToLLVMPattern<AllocSPDOp>::ConvertOpToLLVMPattern;
 
@@ -49,28 +143,10 @@ class AllocSPDOpLowering : public ConvertOpToLLVMPattern<AllocSPDOp> {
 
     //FIXME: should use a more robust way to get size
     for (auto size : alloc.getOperands()) {
-      // Check if the type is already i64
-      if (size.getType().isa<IntegerType>() && size.getType().cast<IntegerType>().getWidth() == 64) {
-        sizes.push_back(size);
-      } else {
-        // Trace back the origin of the size if it's not an i64
-        if (auto castOp = size.getDefiningOp<UnrealizedConversionCastOp>()) {
-          Value original = castOp.getOperand(0);
-          // Check if the original value is of i64 type
-          if (original.getType().isa<IntegerType>() && original.getType().cast<IntegerType>().getWidth() == 64) {
-            sizes.push_back(original);
-          } else {
-            // If still not i64, add a cast to i64, this is a fallback and might not be semantically correct
-            auto castedSize = rewriter.create<LLVM::SExtOp>(alloc.getLoc(), intType, original);
-            sizes.push_back(castedSize);
-          }
-        } else {
-          // If we can't trace back to a cast operation, we cast directly here (fallback)
-          auto castedSize = rewriter.create<LLVM::SExtOp>(alloc.getLoc(), intType, size);
-          sizes.push_back(castedSize);
-        }
-      }
-  }
+      // trace the operand back to the original i64
+      auto tracedSize = traceIntegerType(size, rewriter);
+      sizes.push_back(tracedSize);
+    }
     rewriter.replaceOpWithNewOp<LLVM::MAASpdAllocOp>(alloc, newTy, sizes);
     return success();
   }
@@ -101,6 +177,7 @@ namespace {
     }
     LLVMConversionTarget target(getContext());
     target.addIllegalOp<AllocSPDOp>();
+    target.addIllegalOp<PackedGenericLoadOp>();
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<AllocSPDOpLowering>(converter);
 
