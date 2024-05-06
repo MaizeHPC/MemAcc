@@ -1,3 +1,5 @@
+export PATH=$PATH:/home/lukezhuz/MemAcc/build/bin/
+
 echo "[LOG]: converting test.cpp to test.mlir"
 cgeist test.cpp -raise-scf-to-affine -O2 -S -o test.mlir
 

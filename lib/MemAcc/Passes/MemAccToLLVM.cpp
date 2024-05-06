@@ -39,7 +39,7 @@ namespace{
 static Value traceIntegerType(Value size, ConversionPatternRewriter &rewriter) {
   auto intType = rewriter.getI64Type();
   // Check if the type is already i64
-  if (size.getType().isa<IntegerType>() && size.getType().cast<IntegerType>().getWidth() == 64) {
+  if (size.getType().isa<IntegerType>()) {
     return size;
   } else {
     // Trace back the origin of the size if it's not an i64
@@ -57,6 +57,23 @@ static Value traceIntegerType(Value size, ConversionPatternRewriter &rewriter) {
       // If we can't trace back to a cast operation, we cast directly here (fallback)
       auto castedSize = rewriter.create<LLVM::SExtOp>(size.getLoc(), intType, size);
       return castedSize;
+    }
+  }
+}
+
+static Value tracePtrType(Value ptr, ConversionPatternRewriter &rewriter) {
+  auto type = ptr.getType();
+  // Check if the type is already i64
+  if (type.isa<LLVM::LLVMPointerType>()) {
+    return ptr;
+  } else {
+    // Trace back the origin of the size if it's not an i64
+    if (auto castOp = ptr.getDefiningOp<UnrealizedConversionCastOp>()) {
+      Value original = castOp.getOperand(0);
+      // Check if the original value is of i64 type
+      return original;
+    } else {
+      assert(false && "Unsupported type for tracing");
     }
   }
 }
@@ -97,7 +114,7 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
       lowerBound = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
         rewriter.getIntegerAttr(rewriter.getI64Type(), constLowerBound));
     } else {
-      lowerBound = load.getLowerBoundOperands()[0];
+      lowerBound = traceIntegerType(load.getLowerBoundOperands()[0], rewriter);
     }
 
     int constUpperBound = 0;
@@ -108,21 +125,31 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
       upperBound = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
         rewriter.getIntegerAttr(rewriter.getI64Type(), constUpperBound));
     } else {
-      upperBound = load.getUpperBoundOperands()[0];;
+      upperBound = traceIntegerType(load.getUpperBoundOperands()[0], rewriter);
     }
-    
-    //set loop bound
-    rewriter.create<LLVM::MAA_SetLoopBoundOp>(loc, lowerBound, upperBound);
 
     //set step size
-    auto step = load.getStepAsAPInt();
-    auto stepAttr = IntegerAttr::get(
-        IntegerType::get(rewriter.getContext(), 32), step);
-    rewriter.create<LLVM::MAA_SetLoopStepOp>(loc, step);
+    auto step = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), load.getStepAsAPInt());
+    
+    //set loop configuration
+    auto iter = rewriter.create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound, upperBound, step).getResult();
 
-    //set indirection level
-    auto indirectionLevel = load.getIndirectionLevel();
-    rewriter.create<LLVM::MAA_SetIndirectLevelOp>(loc, indirectionLevel);
+    //convert internal memacc.load to llvm load intrinsics
+    int ins_idx = 0;
+    for (auto& I : load.getBody().front()){
+      if (isa<MemAcc::LoadOp>(I)){
+        if (ins_idx == 0){
+          //set data pointer for indices
+          auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
+          iter = rewriter.create<LLVM::MAA_StreamAccess>(loc, rewriter.getI32Type(),iter, dataPtr);
+        } else {
+          //set data pointer for final data that would be stored into spd
+          auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
+          iter = rewriter.create<LLVM::MAA_IndirectAccess>(loc, rewriter.getI32Type(),iter, dataPtr);
+        }
+      }
+      ins_idx++;
+    }
 
     rewriter.eraseOp(load);
     return success();
@@ -180,6 +207,7 @@ namespace {
     target.addIllegalOp<PackedGenericLoadOp>();
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<AllocSPDOpLowering>(converter);
+    patterns.add<PackedGenericLoadOpLowering>(converter);
 
     if (failed(applyPartialConversion(m, target, std::move(patterns))))
         signalPassFailure();
