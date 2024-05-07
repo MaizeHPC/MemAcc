@@ -1,7 +1,19 @@
+#include <stdio.h>
+
 void gather(double *a, double *b, int *idx, int n) {
   for (int i = 0; i < n; i++) {
     a[i] = b[idx[i]];
   }
+}
+
+int main(){
+  double a[4], b[4] = {1.0, 2.0, 3.0, 4.0};
+  int idx[4] = {3, 2, 1, 0};
+  gather(a, b, idx, 4);
+  for (int i = 0; i < 4; i++) {
+    printf("%f\n", a[i]);
+  }
+  return 0;
 }
 
 // IR
