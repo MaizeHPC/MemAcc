@@ -36,6 +36,8 @@ struct MemAccToLLVMPass
 
 namespace{
 
+DenseMap<Value, Value> spd_alloc_conversion_mapping;
+
 static Value traceIntegerType(Value size, ConversionPatternRewriter &rewriter) {
   auto intType = rewriter.getI64Type();
   // Check if the type is already i64
@@ -104,6 +106,21 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
 
     auto loc = load.getLoc();
 
+    // //convert spdalloc to llvm intrinsics alloc
+    // auto alloc = llvm::dyn_cast<AllocSPDOp>(load.getOutputs()[0].getDefiningOp());
+    // auto newTy = typeConverter->convertType(alloc.getResult().getType());
+    //  // for all sizes, trace the size back to the original i64
+    // auto intType = rewriter.getI64Type();
+    // SmallVector<Value> sizes;
+
+    // //FIXME: should use a more robust way to get size
+    // for (auto size : alloc.getOperands()) {
+    //   // trace the operand back to the original i64
+    //   auto tracedSize = traceIntegerType(size, rewriter);
+    //   sizes.push_back(tracedSize);
+    // }
+    // auto new_alloc = rewriter.replaceOpWithNewOp<LLVM::MAASpdAllocOp>(alloc, newTy, sizes);
+
     //now assuming only one operand is used for lower bound and upper bound
     //TODO: Consider more complicated cases where affine map is non-trivial
     int constLowerBound = 0;
@@ -151,6 +168,9 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
       ins_idx++;
     }
 
+    // finally write the result to the spd
+    assert(spd_alloc_conversion_mapping.find(load.getOutputs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
+    rewriter.create<LLVM::MAA_WriteSPD>(loc, rewriter.getI32Type(), spd_alloc_conversion_mapping[load.getOutputs()[0]], iter);
     rewriter.eraseOp(load);
     return success();
   }
@@ -174,7 +194,8 @@ class AllocSPDOpLowering : public ConvertOpToLLVMPattern<AllocSPDOp> {
       auto tracedSize = traceIntegerType(size, rewriter);
       sizes.push_back(tracedSize);
     }
-    rewriter.replaceOpWithNewOp<LLVM::MAASpdAllocOp>(alloc, newTy, sizes);
+    auto newOp = rewriter.replaceOpWithNewOp<LLVM::MAASpdAllocOp>(alloc, newTy, sizes);
+    spd_alloc_conversion_mapping[alloc.getResult()] = newOp.getResult();
     return success();
   }
 };
@@ -206,8 +227,8 @@ namespace {
     target.addIllegalOp<AllocSPDOp>();
     target.addIllegalOp<PackedGenericLoadOp>();
     mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<AllocSPDOpLowering>(converter);
-    patterns.add<PackedGenericLoadOpLowering>(converter);
+    patterns.add<AllocSPDOpLowering>(converter,/*benefit=*/2);
+    patterns.add<PackedGenericLoadOpLowering>(converter, /*benefit=*/1);
 
     if (failed(applyPartialConversion(m, target, std::move(patterns))))
         signalPassFailure();
