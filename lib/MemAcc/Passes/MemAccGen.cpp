@@ -201,7 +201,7 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     }
 
     // If there is no indirection, return failure
-    if (indirectionLevel < 1){
+    if (indirectionLevel <= 1){
       return failure();
     }
 
