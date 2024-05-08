@@ -145,33 +145,33 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
       upperBound = traceIntegerType(load.getUpperBoundOperands()[0], rewriter);
     }
 
+    // initialize MAA; TODO: move it to very top of the function
+    auto maa = rewriter.create<LLVM::MAA_Init>(loc, LLVM::LLVMPointerType::get(rewriter.getContext(),0)).getResult();
+
     //set step size
     auto step = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), load.getStepAsAPInt());
     
     //set loop configuration
-    auto root = rewriter.create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound, upperBound, step).getResult();
+    auto root = rewriter.create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound, upperBound, step, maa).getResult();
     auto iter = root;
     //convert internal memacc.load to llvm load intrinsics
     int ins_idx = 0;
     for (auto& I : load.getBody().front()){
       if (isa<MemAcc::LoadOp>(I)){
         auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
-        if (ins_idx == 0){
-          //set data pointer for indices
-          iter = rewriter.create<LLVM::MAA_StreamAccess>(loc, rewriter.getI32Type(),iter, dataPtr);
-        } else if (ins_idx == load.getIndirectionLevel()){
+        if (ins_idx == load.getIndirectionLevel()){
           assert(spd_alloc_conversion_mapping.find(load.getOutputs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
           //set data pointer for final data that would be stored into spd
-          iter = rewriter.create<LLVM::MAA_IndirectAccessExt>(loc, rewriter.getI32Type(),iter, dataPtr, spd_alloc_conversion_mapping[load.getOutputs()[0]]);
+          iter = rewriter.create<LLVM::MAA_LoadAccessExt>(loc, rewriter.getI32Type(),iter, dataPtr, spd_alloc_conversion_mapping[load.getOutputs()[0]], maa);
         } else {
-          iter = rewriter.create<LLVM::MAA_IndirectAccessInt>(loc, rewriter.getI32Type(),iter, dataPtr);
+          iter = rewriter.create<LLVM::MAA_LoadAccessInt>(loc, rewriter.getI32Type(),iter, dataPtr, maa);
         }
         ins_idx++;
       }
     }
 
     // finally initiate the loop
-    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root);
+    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, maa);
     rewriter.eraseOp(load);
     return success();
   }
