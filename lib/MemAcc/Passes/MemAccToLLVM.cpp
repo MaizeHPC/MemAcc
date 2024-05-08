@@ -149,28 +149,29 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
     auto step = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), load.getStepAsAPInt());
     
     //set loop configuration
-    auto iter = rewriter.create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound, upperBound, step).getResult();
-
+    auto root = rewriter.create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound, upperBound, step).getResult();
+    auto iter = root;
     //convert internal memacc.load to llvm load intrinsics
     int ins_idx = 0;
     for (auto& I : load.getBody().front()){
       if (isa<MemAcc::LoadOp>(I)){
+        auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
         if (ins_idx == 0){
           //set data pointer for indices
-          auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
           iter = rewriter.create<LLVM::MAA_StreamAccess>(loc, rewriter.getI32Type(),iter, dataPtr);
-        } else {
+        } else if (ins_idx == load.getIndirectionLevel()){
+          assert(spd_alloc_conversion_mapping.find(load.getOutputs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
           //set data pointer for final data that would be stored into spd
-          auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
-          iter = rewriter.create<LLVM::MAA_IndirectAccess>(loc, rewriter.getI32Type(),iter, dataPtr);
+          iter = rewriter.create<LLVM::MAA_IndirectAccessExt>(loc, rewriter.getI32Type(),iter, dataPtr, spd_alloc_conversion_mapping[load.getOutputs()[0]]);
+        } else {
+          iter = rewriter.create<LLVM::MAA_IndirectAccessInt>(loc, rewriter.getI32Type(),iter, dataPtr);
         }
+        ins_idx++;
       }
-      ins_idx++;
     }
 
-    // finally write the result to the spd
-    assert(spd_alloc_conversion_mapping.find(load.getOutputs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
-    rewriter.create<LLVM::MAA_WriteSPD>(loc, rewriter.getI32Type(), spd_alloc_conversion_mapping[load.getOutputs()[0]], iter);
+    // finally initiate the loop
+    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root);
     rewriter.eraseOp(load);
     return success();
   }

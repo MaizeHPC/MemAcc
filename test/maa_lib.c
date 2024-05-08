@@ -16,12 +16,12 @@ int maa_stream_i32_p0(int stream_id, void* ptr) {
     return stream_id;  // Returning the stream ID as a placeholder
 }
 
-int maa_indirect_i32_p0(int index, void* ptr) {
-    printf("Function: maa_indirect_i32_p0, Index: %d, Ptr: %p\n", index, ptr);
+int maa_indirect_ext_i32_p0_p0(int index, void* ptr, void* buf) {
+    printf("Function: maa_indirect_i32_p0, Index: %d, Ptr: %p, buf: %p\n", index, ptr, buf);
     return index;  // Returning the index as a placeholder
 }
 
-int maa_writespd_p0_i32(void* spd_ptr, int data) {
-    printf("Function: maa_writespd_p0_i32, Spd Ptr: %p, Data: %d\n", spd_ptr, data);
+int maa_start_i32(int root) {
+    printf("Function: maa_start_i32 Root: %d\n", root);
     return 0;  // Returning 0 as a placeholder
 }
