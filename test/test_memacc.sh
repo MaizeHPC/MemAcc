@@ -1,1 +1,1 @@
-polygeist-opt test.mlir --memory-access-generation --mlir-disable-threading -o test_memacc.mlir
+polygeist-opt test.mlir --memory-access-generation --memory-access-hoist-loads --canonicalize --mlir-disable-threading -o test_memacc.mlir

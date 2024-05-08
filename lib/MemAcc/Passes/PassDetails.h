@@ -20,8 +20,9 @@
 #include "mlir/Pass/Pass.h"
 #include "MemAcc/Ops.h"
 #include "MemAcc/Passes/Passes.h"
+#include <iostream>
 
-// #define DEBUG
+#define DEBUG
 #ifdef DEBUG
 #define PRINT(x) llvm::errs() << x << "\n"
 #else

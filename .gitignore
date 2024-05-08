@@ -85,3 +85,9 @@ pythonenv*
 # tmp output from tests
 *.exec1
 *.out1
+/test/*.mlir*
+/test/*.o
+/test/*.ll
+/test/*.bc
+/test/*.so
+/test/test_memacc

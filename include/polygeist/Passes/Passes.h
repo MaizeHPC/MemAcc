@@ -1,7 +1,6 @@
 #ifndef POLYGEIST_DIALECT_POLYGEIST_PASSES_H
 #define POLYGEIST_DIALECT_POLYGEIST_PASSES_H
 
-#include "MemAcc/Dialect.h"
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
