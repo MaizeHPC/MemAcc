@@ -20,7 +20,5 @@ int main(){
     }
   }
   printf("Success\n");
-
-  // check one by one...
   return 0;
 }

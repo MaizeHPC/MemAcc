@@ -27,7 +27,7 @@ include "mlir/IR/BuiltinAttributes.td"  // This includes the definition for Inte
 
 
 //===----------------------------------------------------------------------===//
-// packed op outside of loops
+// packed op load outside of loops
 //===----------------------------------------------------------------------===//
 def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
     [AttrSizedOperandSegments, AutomaticAllocationScope, 
@@ -35,7 +35,7 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
      ["getSingleInductionVar", "getSingleLowerBound", "getSingleStep",
       "getSingleUpperBound", "getYieldedValuesMutable",
       "replaceWithAdditionalYields"]>]>{
-  let summary = "Defines a generic gather pattern (will be outside of loops)";
+  let summary = "Defines a generic gather pattern (will be hoisted outside of loops)";
   let description = [{
     The `MemAcc.packed_generic_load` operation is designed to encapsulate any
     arbitrary load access pattern, including stride, indirect, and other
@@ -186,15 +186,6 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
     /// lists (same operands in the same order).
     bool matchingBoundOperandList();
   }];
-
-  // let assemblyFormat = (ins Variadic<AnyShaped>:$outputs,
-  //                     Variadic<Index>:$lowerBoundOperands,
-  //                     Variadic<Index>:$upperBoundOperands,
-  //                     Variadic<AnyType>:$inits,
-  //                     AffineMapAttr:$lowerBoundMap,
-  //                     AffineMapAttr:$upperBoundMap,
-  //                     IndexAttr:$step),
-  //                    (outs Variadic<AnyType>:$results);
 }
 
 
@@ -214,10 +205,23 @@ def MemAcc_GenericStoreOp : MemAcc_Op<"generic_store"> {
     Example:
 
     ```mlir
-    memref.generic_store {
-      // Define memory access pattern here
-      %0 = memref.load %addr[%offset] : memref<...>
-    } : <type>
+    affine.for %i = 0 to %0 {
+        %1 = affine.load %idx[%i] : memref<?xi32>
+        %2 = arith.index_cast %1 : i32 to index
+        %3 = memref.load %b[%i] : memref<?xf64>
+        affine.store %3, %a[%2] : memref<?xf64>
+      }
+    ```
+
+    ```mlir
+    affine.for %i = 0 to %0 {
+        %0 = memref.load %b[%i] : memref<?xf64>
+        memacc.generic_store {
+          %1 = memacc.load %idx[%i] :  memref<?xi32>
+          %2 = memacc.index_cast %1 : i32 to index
+          memacc.store %0, %a[%2] :  memref<?xi32>
+        }
+      }
     ```
   }];
 
@@ -231,7 +235,7 @@ def MemAcc_GenericStoreOp : MemAcc_Op<"generic_store"> {
 }
 
 def MemAcc_GenericLoadOp : MemAcc_Op<"generic_load"> {
-  let summary = "Defines a generic memory access pattern.";
+  let summary = "Defines a generic gather memory access pattern(identified inside loop).";
   let description = [{
     The `MemAcc.generic_load` operation encapsulates any arbitrary memory 
     access pattern, including stride, indirect, and other patterns. It takes 
@@ -245,10 +249,24 @@ def MemAcc_GenericLoadOp : MemAcc_Op<"generic_load"> {
     Example:
 
     ```mlir
-    %result = memacc.generic_load indirection-level = 2 {
-      %loaded_value = memref.load %addr[%offset] : memref<...>
-      memacc.yield %loaded_value : type_of(<...>)
-    } : type_of(<...>)
+      affine.for %i = 0 to %0 {
+      %1 = affine.load %idx[%i] : memref<?xi32>
+      %2 = arith.index_cast %1 : i32 to index
+      %3 = memref.load %b[%1] : memref<?xf64>
+      affine.store %3, %a[%i] : memref<?xf64>
+    }
+    ```
+
+    ```mlir
+    affine.for %i = 0 to %0 {
+      %4 = memacc.generic_load indirection_level = 1 {
+        %1 = memacc.load %idx[%i] :  memref<?xi32>
+        %2 = memacc.index_cast %1 : i32 to index
+        %3 = memacc.load %b[%2] :  memref<?xf64>
+        memacc.yield %3 : f64
+      }
+      affine.store %4, %a[%i] :  memref<?xf64>
+    }
     ```
   }];
 
@@ -288,27 +306,6 @@ def MemAcc_LoadOp : MemAcc_Op<"load",
     `affine.apply` operation that can in turn take as arguments all of the
     aforementioned SSA values or the recursively result of such an
     `affine.apply` operation.
-
-    Example:
-
-    ```mlir
-    %1 = affine.apply affine_map<(d0, d1) -> (3*d0)> (%i, %j)
-    %2 = affine.apply affine_map<(d0, d1) -> (d1+1)> (%i, %j)
-    %12 = memacc.load %A[%1, %2] : memref<8x?xi32, #layout, memspace0>
-
-    // Example of an indirect load (treated as non-affine)
-    %3 = affine.apply affine_map<(d0) -> (2*d0 + 1)>(%12)
-    %13 = memref.load %A[%3, %2] : memref<4x?xi32, #layout, memspace0>
-    ```
-
-    **Context:** The `load` and `store` operations are specifically crafted to
-    fully resolve a reference to an element of a memref, and (in affine
-    `affine.if` and `affine.for` operations) the compiler can follow use-def
-    chains (e.g. through [`affine.apply`](Affine.md/#affineapply-affineapplyop)
-    operations) to precisely analyze references at compile-time using polyhedral
-    techniques. This is possible because of the
-    [restrictions on dimensions and symbols](Affine.md/#restrictions-on-dimensions-and-symbols)
-    in these contexts.
   }];
 
   let arguments = (ins Arg<AnyMemRef, "the reference to load from",
@@ -344,29 +341,6 @@ def MemAcc_StoreOp : MemAcc_Op<"store",
     Store a value to a memref location given by indices. The value stored should
     have the same type as the elemental type of the memref. The number of
     arguments provided within brackets need to match the rank of the memref.
-
-    In an affine context, the indices of a store are restricted to SSA values
-    bound to surrounding loop induction variables,
-    [symbols](Affine.md/#restrictions-on-dimensions-and-symbols), results of a
-    `constant` operation, or the result of an
-    [`affine.apply`](Affine.md/#affineapply-affineapplyop) operation that can in
-    turn take as arguments all of the aforementioned SSA values or the
-    recursively result of such an `affine.apply` operation.
-
-    Example:
-
-    ```mlir
-    memref.store %100, %A[%1, 1023] : memref<4x?xf32, #layout, memspace0>
-    ```
-
-    **Context:** The `load` and `store` operations are specifically crafted to
-    fully resolve a reference to an element of a memref, and (in polyhedral
-    `affine.if` and `affine.for` operations) the compiler can follow use-def
-    chains (e.g. through [`affine.apply`](Affine.md/#affineapply-affineapplyop)
-    operations) to precisely analyze references at compile-time using polyhedral
-    techniques. This is possible because of the
-    [restrictions on dimensions and symbols](Affine.md/#restrictions-on-dimensions-and-symbols)
-    in these contexts.
   }];
 
   let arguments = (ins AnyType:$value,
@@ -448,6 +422,7 @@ class MemAcc_IntBinaryOp<string mnemonic, list<Trait> traits = []> :
 class MemAcc_TotalIntBinaryOp<string mnemonic, list<Trait> traits = []> :
     MemAcc_IntBinaryOp<mnemonic, traits # [Pure]>;
 
+// Index transformation operations
 //===----------------------------------------------------------------------===//
 // AddIOp
 //===----------------------------------------------------------------------===//
@@ -460,31 +435,6 @@ def MemAcc_AddIOp : MemAcc_TotalIntBinaryOp<"addi", [Commutative]> {
     mathematical value of the addition modulo 2^n, where `n` is the bitwidth. 
     Because `arith` integers use a two's complement representation, this operation 
     is applicable on both signed and unsigned integer operands.
-
-    The `addi` operation takes two operands and returns one result, each of
-    these is required to be the same type. This type may be an integer scalar type, 
-    a vector whose element type is integer, or a tensor of integers.
-
-    This op supports `nuw`/`nsw` overflow flags which stands stand for
-    "No Unsigned Wrap" and "No Signed Wrap", respectively. If the `nuw` and/or
-    `nsw` flags are present, and an unsigned/signed overflow occurs
-    (respectively), the result is poison.
-
-    Example:
-
-    ```mlir
-    // Scalar addition.
-    %a = arith.addi %b, %c : i64
-
-    // Scalar addition with overflow flags.
-    %a = arith.addi %b, %c overflow<nsw, nuw> : i64
-
-    // SIMD vector element-wise addition.
-    %f = arith.addi %g, %h : vector<4xi32>
-
-    // Tensor element-wise addition.
-    %x = arith.addi %y, %z : tensor<4x?xi8>
-    ```
   }];
   // let hasFolder = 1;
   // let hasCanonicalizer = 1;
@@ -504,31 +454,6 @@ def MemAcc_SubIOp : MemAcc_TotalIntBinaryOp<"subi"> {
     value of the subtraction modulo 2^n, where `n` is the bitwidth. Because `arith`
     integers use a two's complement representation, this operation is applicable on
     both signed and unsigned integer operands.
-
-    The `subi` operation takes two operands and returns one result, each of
-    these is required to be the same type. This type may be an integer scalar type,
-    a vector whose element type is integer, or a tensor of integers.
-
-    This op supports `nuw`/`nsw` overflow flags which stands stand for
-    "No Unsigned Wrap" and "No Signed Wrap", respectively. If the `nuw` and/or
-    `nsw` flags are present, and an unsigned/signed overflow occurs
-    (respectively), the result is poison.
-
-    Example:
-
-    ```mlir
-    // Scalar subtraction.
-    %a = arith.subi %b, %c : i64
-
-    // Scalar subtraction with overflow flags.
-    %a = arith.subi %b, %c overflow<nsw, nuw> : i64
-
-    // SIMD vector element-wise subtraction.
-    %f = arith.subi %g, %h : vector<4xi32>
-
-    // Tensor element-wise subtraction.
-    %x = arith.subi %y, %z : tensor<4x?xi8>
-    ```
   }];
   // let hasFolder = 1;
   // let hasCanonicalizer = 1;
@@ -548,31 +473,6 @@ def MemAcc_MulIOp : MemAcc_TotalIntBinaryOp<"muli", [Commutative]> {
     mathematical value of the multiplication modulo 2^n, where `n` is the bitwidth.
     Because `arith` integers use a two's complement representation, this operation is
     applicable on both signed and unsigned integer operands.
-
-    The `muli` operation takes two operands and returns one result, each of
-    these is required to be the same type. This type may be an integer scalar type,
-    a vector whose element type is integer, or a tensor of integers.
-
-    This op supports `nuw`/`nsw` overflow flags which stands stand for
-    "No Unsigned Wrap" and "No Signed Wrap", respectively. If the `nuw` and/or
-    `nsw` flags are present, and an unsigned/signed overflow occurs
-    (respectively), the result is poison.
-
-    Example:
-
-    ```mlir
-    // Scalar multiplication.
-    %a = arith.muli %b, %c : i64
-
-    // Scalar multiplication with overflow flags.
-    %a = arith.muli %b, %c overflow<nsw, nuw> : i64
-
-    // SIMD vector element-wise multiplication.
-    %f = arith.muli %g, %h : vector<4xi32>
-
-    // Tensor element-wise multiplication.
-    %x = arith.muli %y, %z : tensor<4x?xi8>
-    ```
   }];
   // let hasFolder = 1;
   // let hasCanonicalizer = 1;
