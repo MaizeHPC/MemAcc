@@ -37,6 +37,7 @@ llvm::DenseMap<Operation *, llvm::SmallPtrSet<Operation *, 16>>
 llvm::DenseMap<Operation *, llvm::SmallVector<Operation *, 16>>
     loadOpToIndirectChain;
 
+// deepest load is the one without any users
 static void postProcessDeepestLoads() {
   for (auto o : deepestLoads) {
     for (auto i : loadOpToIndirectUses[o]) {
@@ -110,6 +111,9 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
                                                 loadOp.getIndices());
   }
 
+  // get types of results of generic load op
+  // eg. if b[idx[i]] and  a[b[idx[i]]] are used later in the loop
+  //     the result types of generic load op will be {a, b}
   SmallVector<Type, 4> getGenericLoadOpResultTypes(Operation *loadOp) const {
     SmallVector<Type, 4> resultTypes;
     auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
@@ -153,7 +157,6 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
       SmallVector<Operation *, 4> users{I.getUsers().begin(),
                                         I.getUsers().end()};
       for (auto U : users) {
-        // PRINT("In populateGenericLoadOp, User: for " << I << " is " << *U);
         if (block != U->getBlock()) {
           hasExternalUses = true;
           for (unsigned int operandIndex = 0;
@@ -278,12 +281,10 @@ void MemAccGenPass::runOnOperation() {
   loadOpToIndirectChain.clear();
   mlir::MLIRContext *context = getOperation()->getContext();
 
+    // analyze load operations in affine loops and mark the deepest loads
   analyzeLoadOps(getOperation(), deepestLoads);
 
-  // context->loadDialect<mlir::MemAcc::MemAccDialect>();
   mlir::RewritePatternSet patterns(context);
-  // patterns.add<StoreOpConversionPattern<memref::StoreOp>>(context);
-  // patterns.add<StoreOpConversionPattern<affine::AffineStoreOp>>(context);
   patterns.add<LoadOpConversionPattern<memref::LoadOp>>(context);
   patterns.add<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
   patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(

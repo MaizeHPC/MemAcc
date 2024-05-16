@@ -1,10 +1,46 @@
-## Test MemAcc Pass Instructions
-1. Refer to the [Build instructions](#build-instructions) to build Polygeist.
-2. Run the following command to test the MemAcc pass:
+## Indirect Memory Access Accelerator E2E Compiler(MemAcc)
+This is the code repo for the compiler that can identify indirect memory access patterns in legacy C code and transform them into packed gather/scatter operations by moving them outside from loop. It builds on top of Polygeist, which is a compiler that can raise C code to MLIR::Affine. 
+
+In general, we made the following contribution:
+* We implemented a new MLIR Dialect called `MemAcc`(memory access) to represent arbitrary indirect memory access patterns. [Code Link](include/MemAcc/MemAccOps.td)
+* We implemented an MLIR transformation pass that can identify indirect memory accesses in `affine.for` and packed them in `memacc.generic*` operations. [Code Link](lib/MemAcc/Passes/MemAccGen.cpp)
+* We implemented an MLIR transformation pass that can hoist identified indirect memory access outside of `affine.for` into `memacc.packed_generic*`. [Code Link](lib/MemAcc/Passes/MemAccHoistLoads.cpp)
+* We implemented an MLIR pass that can lower the hoisted packed memory access patterns to target-aware llvm intrinsics. [Code Link](lib/MemAcc/Passes/MemAccToLLVM.cpp)(
+Note the llvm intrinsics we added can be found here [Code Link](https://github.com/MaizeHPC/llvm-project/blob/182692a6133d3048b4fb24de98093d39c27e7d90/llvm/include/llvm/IR/Intrinsics.td#L2545-L2569)
+mlir::llvm intrinsics we added can be found here [Code Link](https://github.com/MaizeHPC/llvm-project/blob/182692a6133d3048b4fb24de98093d39c27e7d90/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td#L1266-L1325))
+* We implemented an LLVM pass that can transform the llvm intrinsics to external function calls. [Code Link](https://github.com/MaizeHPC/llvm-project/blob/d4db9e67ab825de35460895ba7a18ea6e8130e57/llvm/lib/Transforms/Utils/IntrinsicGen.cpp)
+* We implemented a functional simulator that can simulate the behavior of microarchitecture we are designing [Code Link](https://github.com/MaizeHPC/MAA)
+
+## Build the compiler and run our demo
+You have to follow the below steps to build our compiler and run our demo
+1. Clone the repo and dependent third-party repo
 ```sh
-cd test
+git clone git@github.com:MaizeHPC/MemAcc.git
+git submodule update --init --recursive
+```
+2. Build the project (if Ninja is not available, change that to "Unix Makefiles")
+```sh
+mkdir build 
+cd build
+cmake -G "Unix Makefiles"  ../llvm-project/llvm   -DLLVM_ENABLE_PROJECTS="clang;mlir"   -DLLVM_EXTERNAL_PROJECTS="polygeist"   -DLLVM_EXTERNAL_POLYGEIST_SOURCE_DIR=..   -DLLVM_TARGETS_TO_BUILD="host"   -DLLVM_ENABLE_ASSERTIONS=ON   -DCMAKE_BUILD_TYPE=Release
+```
+3. Run the end-to-end gather kernel demo(in each step, please note that the IR files will be generated, press enter to continue)
+```sh
+cd test/demo_may_8
+bash test_all.sh
 ```
 
+## Future work checklist
+- [] Implement the scatter kernels
+- [] Our indirect memory access pass should support arbitrary loop transformation
+- [] Support nested loop
+- [] Support conditions inside of loop
+- [] Support other backends
+
+
+
+
+## The following are instructions for building Polygeist
 ## Build instructions
 
 ### Requirements 
