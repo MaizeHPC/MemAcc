@@ -126,13 +126,14 @@ public:
       // idx
       for (auto user : result.getUsers()) {
         if (dyn_cast<affine::AffineStoreOp>(user) &&
-            user->getOperand(1) == result) {
+            user->getOperand(2) == result) {
           // get storeOp's value' type
           alloc_spds_scatter.push_back(getSpdBuffer(
               user->getOperand(0).getType(), rewriter, loop_length, op));
 
         } else if (dyn_cast<memref::StoreOp>(user) &&
-                   user->getOperand(1) == result) {
+                   user->getOperand(2) == result) {
+          PRINT("Found a memref::StoreOp" << *user);
           // get storeOp's value' type
           alloc_spds_scatter.push_back(getSpdBuffer(
               user->getOperand(0).getType(), rewriter, loop_length, op));
@@ -152,7 +153,7 @@ public:
     // Step2: Create Packed Memory Access Operations outside of the loop
     // First case: If all result idx are used for store idx, we can create a
     // PackedGenericStireOp
-    if (store_idx.size() > 0) {
+    if (store_idx.size() == op->getResults().size()) {
       // create an empty generic op under the op
       // move all memacc.load that used as store idx to the new op
       // change the store value to a memacc.load from a spd buffer

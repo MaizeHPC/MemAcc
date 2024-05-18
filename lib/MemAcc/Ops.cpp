@@ -36,18 +36,18 @@ static Type getTypeIfLikeOrMemRef(Type type) {
                            type_list<ElementTypes...>());
 }
 
-static bool areValidCastInputsAndOutputs(TypeRange inputs, TypeRange outputs) {
-  if (inputs.size() != 1 || outputs.size() != 1)
+static bool areValidCastInputsAndOutputs(TypeRange inputs, TypeRange bufs) {
+  if (inputs.size() != 1 || bufs.size() != 1)
     return false;
-  return succeeded(verifyCompatibleShapes(inputs.front(), outputs.front()));
+  return succeeded(verifyCompatibleShapes(inputs.front(), bufs.front()));
 }
 
-static bool areIndexCastCompatible(TypeRange inputs, TypeRange outputs) {
-  if (!areValidCastInputsAndOutputs(inputs, outputs))
+static bool areIndexCastCompatible(TypeRange inputs, TypeRange bufs) {
+  if (!areValidCastInputsAndOutputs(inputs, bufs))
     return false;
 
   auto srcType = getTypeIfLikeOrMemRef<IntegerType, IndexType>(inputs.front());
-  auto dstType = getTypeIfLikeOrMemRef<IntegerType, IndexType>(outputs.front());
+  auto dstType = getTypeIfLikeOrMemRef<IntegerType, IndexType>(bufs.front());
   if (!srcType || !dstType)
     return false;
 
@@ -56,8 +56,8 @@ static bool areIndexCastCompatible(TypeRange inputs, TypeRange outputs) {
 }
 
 bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
-                                            TypeRange outputs) {
-  return areIndexCastCompatible(inputs, outputs);
+                                            TypeRange bufs) {
+  return areIndexCastCompatible(inputs, bufs);
 }
 
 // TODO:9tempest: Refactor builder for packedops by creating a base class in Ops.h
@@ -67,7 +67,7 @@ bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
 // / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
 // / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange outputs,
+                        ValueRange bufs,
                         ValueRange lbOperands, AffineMap lbMap,
                         ValueRange ubOperands, AffineMap ubMap, int64_t step,
                         ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
@@ -89,8 +89,8 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   // Add an attribute for the step.
   result.addAttribute(getStepAttrStrName(),
                       builder.getIntegerAttr(builder.getIndexType(), step));
-  // Add the outputs.
-  result.addOperands(outputs);
+  // Add the bufs.
+  result.addOperands(bufs);
 
   // Add the lower bound.
   result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
@@ -104,7 +104,7 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
 
   result.addAttribute("operandSegmentSizes",
                       builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(outputs.size()),
+                          {static_cast<int32_t>(bufs.size()),
                            static_cast<int32_t>(lbOperands.size()),
                            static_cast<int32_t>(ubOperands.size()),
                            static_cast<int32_t>(iterArgs.size())}));
@@ -131,12 +131,12 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
                         int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
                         BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
                bodyBuilder);
 }
 
@@ -180,7 +180,7 @@ FailureOr<LoopLikeOpInterface> PackedGenericLoadOp::replaceWithAdditionalYields(
 // / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
 // / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange outputs,
+                        ValueRange bufs,
                         ValueRange lbOperands, AffineMap lbMap,
                         ValueRange ubOperands, AffineMap ubMap, int64_t step,
                         ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
@@ -202,8 +202,8 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
   // Add an attribute for the step.
   result.addAttribute(getStepAttrStrName(),
                       builder.getIntegerAttr(builder.getIndexType(), step));
-  // Add the outputs.
-  result.addOperands(outputs);
+  // Add the bufs.
+  result.addOperands(bufs);
 
   // Add the lower bound.
   result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
@@ -217,7 +217,7 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
 
   result.addAttribute("operandSegmentSizes",
                       builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(outputs.size()),
+                          {static_cast<int32_t>(bufs.size()),
                            static_cast<int32_t>(lbOperands.size()),
                            static_cast<int32_t>(ubOperands.size()),
                            static_cast<int32_t>(iterArgs.size())}));
@@ -244,12 +244,12 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
+void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
                         int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
                         BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
                bodyBuilder);
 }
 
@@ -293,7 +293,7 @@ FailureOr<LoopLikeOpInterface> PackedGenericStoreOp::replaceWithAdditionalYields
 // / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
 // / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange outputs,
+                        ValueRange bufs,
                         ValueRange lbOperands, AffineMap lbMap,
                         ValueRange ubOperands, AffineMap ubMap, int64_t step,
                         ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
@@ -315,8 +315,8 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
   // Add an attribute for the step.
   result.addAttribute(getStepAttrStrName(),
                       builder.getIntegerAttr(builder.getIndexType(), step));
-  // Add the outputs.
-  result.addOperands(outputs);
+  // Add the bufs.
+  result.addOperands(bufs);
 
   // Add the lower bound.
   result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
@@ -330,7 +330,7 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
 
   result.addAttribute("operandSegmentSizes",
                       builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(outputs.size()),
+                          {static_cast<int32_t>(bufs.size()),
                            static_cast<int32_t>(lbOperands.size()),
                            static_cast<int32_t>(ubOperands.size()),
                            static_cast<int32_t>(iterArgs.size())}));
@@ -357,12 +357,12 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result, ValueRange outputs, int64_t lb,
+void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
                         int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
                         BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, outputs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
                bodyBuilder);
 }
 

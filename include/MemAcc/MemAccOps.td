@@ -44,7 +44,7 @@ class MemAcc_PackedBaseOp<string mnemonic, list<Trait> traits = []> :
     scratchpad buffer to store the loaded data. 
   }];
 
-  let arguments = (ins Variadic<AnyShaped>:$outputs,
+  let arguments = (ins Variadic<AnyShaped>:$bufs,
                        Variadic<Index>:$lowerBoundOperands,
                        Variadic<Index>:$upperBoundOperands,
                        Variadic<AnyType>:$inits,
@@ -57,12 +57,12 @@ class MemAcc_PackedBaseOp<string mnemonic, list<Trait> traits = []> :
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilder<(ins "ValueRange":$outputs, "int64_t":$lowerBound, "int64_t":$upperBound,
+    OpBuilder<(ins "ValueRange":$bufs, "int64_t":$lowerBound, "int64_t":$upperBound,
       CArg<"int64_t", "1">:$step, CArg<"ValueRange", "std::nullopt">:$iterArgs,
       CArg<"int64_t", "0">:$indirectionLevel,
       CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
            "nullptr">:$bodyBuilder)>,
-    OpBuilder<(ins "ValueRange":$outputs, "ValueRange":$lbOperands, "AffineMap":$lbMap,
+    OpBuilder<(ins "ValueRange":$bufs, "ValueRange":$lbOperands, "AffineMap":$lbMap,
       "ValueRange":$ubOperands, "AffineMap":$ubMap, CArg<"int64_t", "1">:$step,
       CArg<"ValueRange", "std::nullopt">:$iterArgs,
       CArg<"int64_t", "0">:$indirectionLevel,

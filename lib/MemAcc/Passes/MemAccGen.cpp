@@ -7,7 +7,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
-
+#include <algorithm>
 
 
 // Use LLVM's data structures for convenience and performance
@@ -146,8 +146,9 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     auto *block = rewriter.createBlock(&region);
 
     // Move the operations from the indirectLoadUseChain into the block
-    for (int i = indirectLoadUseChain.size() - 1; i >= 0; i--) {
+    for (int i = 0; i < indirectLoadUseChain.size(); i++) {
       auto clonedOp = rewriter.clone(*indirectLoadUseChain[i]);
+      PRINT("clonedOp: " << *clonedOp);
       indirectLoadUseChain[i]->getResult(0).replaceAllUsesWith(
           clonedOp->getResult(0));
       rewriter.eraseOp(indirectLoadUseChain[i]);
@@ -198,6 +199,7 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
 
     uint64_t indirectionLevel = 0;
     auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
+    std::reverse(indirectLoadUseChain.begin(), indirectLoadUseChain.end());
     // Calculate the indirection level based on the number of loads in the
     // indirectLoadUseChain
     for (Operation *op : indirectLoadUseChain) {
@@ -206,9 +208,22 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
       }
     }
 
-    // If there is no indirection, return failure
-    if (indirectionLevel <= 1){
-      return failure();
+    PRINT("current load: " << *loadOp);
+
+    // If there is no indirection and the load is not used by the any store address
+    // or any index cast that used by store address
+    // return failure
+    // TODO: IndirectChain is reversed! Fix this!
+    llvm::SmallVector<Operation *, 16> deepestLoadToStoreAddrChain;
+    bool usedByStoreAddr = typeOperandIdxDependsOn<affine::AffineStoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
+    if (!usedByStoreAddr){
+      usedByStoreAddr = typeOperandIdxDependsOn<memref::StoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
+    }
+    if (indirectionLevel <= 1 && !usedByStoreAddr) {
+        return failure();
+    } else if (usedByStoreAddr){
+      // append the deepestLoadToStoreAddrChain to the indirectLoadUseChain
+      indirectLoadUseChain.append(deepestLoadToStoreAddrChain.begin(), deepestLoadToStoreAddrChain.end());
     }
 
     SmallVector<Value, 4> resultVals;
@@ -259,7 +274,10 @@ void markIndirectLoadUsers(Operation *op,
   }
 }
 
-// analyze load operations in affine loops and mark the deepest loads
+// analyze load operations in affine loops and mark the deepest loads and store indirect chain
+// Refer to algorithm1 in paper:
+// Ainsworth, Sam, and Timothy M. Jones. "Software prefetching for indirect memory accesses." 
+// 2017 IEEE/ACM International Symposium on Code Generation and Optimization (CGO). IEEE, 2017.
 void analyzeLoadOps(Operation *op,
                     llvm::SmallPtrSet<Operation *, 16> &deepestLoads) {
   llvm::SmallPtrSet<Operation *, 16> visited;
