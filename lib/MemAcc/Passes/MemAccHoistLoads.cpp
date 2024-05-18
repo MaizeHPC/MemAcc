@@ -41,57 +41,26 @@ public:
     return ub;
   }
 
-  LogicalResult matchAndRewrite(MemAcc::GenericLoadOp op,
-                                PatternRewriter &rewriter) const override {
-    // Ensure there exists a GenericLoadOp in an affine.for loop body
-    auto forOp = op->getParentOfType<AffineForOp>();
-    assert(forOp && "GenericLoadOp must be in a affine.for loop body");
-
-    // Create alloc_spd ops before affine.for loop
-    // the size of the alloc_spd is the same as the loop length
-    rewriter.setInsertionPoint(forOp);
-    auto loop_length = getForLoopLength(forOp);
-    SmallVector<Value, 4> alloc_spds;
-    for (auto result : op->getResults()) {
-      auto resultType = result.getType();
-
-      // Determine the element type, whether resultType is already a memref or
-      // not
-      SmallVector<int64_t, 4> shape{mlir::ShapedType::kDynamic};
-      mlir::Type elementType;
-      if (auto memrefType = resultType.dyn_cast<mlir::MemRefType>()) {
-        // If resultType is a MemRefType, extract its element type
-        elementType = memrefType.getElementType();
-        shape.append(memrefType.getShape().begin(),
-                     memrefType.getShape().end());
-      } else {
-        // Otherwise, use resultType directly as the element type
-        elementType = resultType;
-      }
-      // Create a MemRefType with a dynamic size in the first dimension and the
-      // obtained element type
-      auto memRefType = mlir::MemRefType::get(shape, elementType);
-      alloc_spds.push_back(rewriter.create<AllocSPDOp>(
-          op.getLoc(), memRefType, ValueRange({loop_length})));
-    }
-
-    auto indirection_level = op.getIndirectionLevel().value();
-
-    llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
-    // Create PackedGenericLoadOp outside of the loop
-    auto packedLoadOp = rewriter.create<PackedGenericLoadOp>(
-        op.getLoc(), ValueRange{alloc_spds_ref}, forOp.getLowerBoundOperands(),
+  template <typename PackedOpType>
+  void generatePackedMemAccOp(MemAcc::GenericLoadOp op,
+                              PatternRewriter &rewriter,
+                              llvm::ArrayRef<mlir::Value> alloc_spds_ref,
+                              AffineForOp forOp, int indirection_level) const {
+    // Create PackedOpType outside of the loop
+    auto packedLoadOp = rewriter.create<PackedOpType>(
+        op.getLoc(), alloc_spds_ref, forOp.getLowerBoundOperands(),
         forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
-        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(), indirection_level);
+        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
+        indirection_level);
 
     // for each instruction in GenericLoadOp, clone them into
-    // PackedGenericLoadOp, replace all users of AffineForOp's induction
-    // variable with the induction variable of PackedGenericLoadOp
+    // PackedOpType, replace all users of AffineForOp's induction
+    // variable with the induction variable of PackedOpType
     auto newInductionVar = packedLoadOp.getInductionVar();
     auto originalInductionVar =
         forOp.getInductionVar(); // Get this from the original AffineForOp
                                  // context
-    PRINT("Done creating PackedGenericLoadOp: " << *packedLoadOp);
+    PRINT("Done creating PackedOp: " << *packedLoadOp);
     rewriter.setInsertionPointToStart(&packedLoadOp.getBody().front());
     DenseMap<Value, Value> InstMap;
     for (auto &I : op.getRegion().front()) {
@@ -106,30 +75,111 @@ public:
         } else if (InstMap.count(newI->getOperand(idx))) {
           newI->setOperand(idx, InstMap[newI->getOperand(idx)]);
         } // assert operand is not in the old for loop
-          //   else if
-        //   (newI->getOperand(idx).getDefiningOp()->getParentOfType<AffineForOp>()
-        //   == forOp) {
-        //     PRINT("Violation: " << *newI->getOperand(idx).getDefiningOp() <<
-        //     " is in the old for loop"); assert(false && "Operand is in the
-        //     old for loop; Too complicated!");
-        // }
       }
     }
 
     PRINT("Done cloning: " << *packedLoadOp);
+  }
 
-    // Back to op's place, replace all uses of op with the load alloc_spds
-    rewriter.setInsertionPoint(op);
-
-    // for each user of op, replace it with the corresponding load op
-    // generate memacc.load ops for each alloc_spd
-    // SmallVector<Value, 4> load_ops;
-    for (unsigned int i = 0; i < op.getNumResults(); i++) {
-      auto load_op = rewriter.create<memref::LoadOp>(
-          op.getLoc(), alloc_spds[i], ValueRange({originalInductionVar}));
-      op->getResult(i).replaceAllUsesWith(load_op);
-      // load_ops.push_back(load_op);
+  Value getSpdBuffer(Type resultType, PatternRewriter &rewriter,
+                     Value loopLength, MemAcc::GenericLoadOp op) const {
+    // Determine the element type, whether resultType is already a memref or
+    // not
+    SmallVector<int64_t, 4> shape{mlir::ShapedType::kDynamic};
+    mlir::Type elementType;
+    if (auto memrefType = resultType.dyn_cast<mlir::MemRefType>()) {
+      // If resultType is a MemRefType, extract its element type
+      elementType = memrefType.getElementType();
+      shape.append(memrefType.getShape().begin(), memrefType.getShape().end());
+    } else {
+      // Otherwise, use resultType directly as the element type
+      elementType = resultType;
     }
+    // Create a MemRefType with a dynamic size in the first dimension and the
+    // obtained element type
+    auto memRefType = mlir::MemRefType::get(shape, elementType);
+    return rewriter.create<AllocSPDOp>(op.getLoc(), memRefType,
+                                       ValueRange({loopLength}));
+  }
+
+  LogicalResult matchAndRewrite(MemAcc::GenericLoadOp op,
+                                PatternRewriter &rewriter) const override {
+    // Ensure there exists a GenericLoadOp in an affine.for loop body
+    auto forOp = op->getParentOfType<AffineForOp>();
+    assert(forOp && "GenericLoadOp must be in a affine.for loop body");
+
+    // Step1: Create alloc_spd ops before affine.for loop
+    // the size of the alloc_spd is the same as the loop length
+    // the type of the alloc_spd is the same as the result type of the generic
+    // op also record the result idx that used for store idx
+    rewriter.setInsertionPoint(forOp);
+    auto loop_length = getForLoopLength(forOp);
+    SmallVector<Value, 4> alloc_spds_gather;
+    SmallVector<Value, 4> alloc_spds_scatter;
+    SmallVector<size_t, 4> store_idx;
+    for (size_t i = 0; i < op->getResults().size(); i++) {
+      auto result = op->getResult(i);
+      auto resultType = result.getType();
+      auto original_alloc_spds_scatter_size = alloc_spds_scatter.size();
+
+      // if the result is used for affine/memref store's idx, record the result
+      // idx
+      for (auto user : result.getUsers()) {
+        if (dyn_cast<affine::AffineStoreOp>(user) &&
+            user->getOperand(1) == result) {
+          // get storeOp's value' type
+          alloc_spds_scatter.push_back(getSpdBuffer(
+              user->getOperand(0).getType(), rewriter, loop_length, op));
+
+        } else if (dyn_cast<memref::StoreOp>(user) &&
+                   user->getOperand(1) == result) {
+          // get storeOp's value' type
+          alloc_spds_scatter.push_back(getSpdBuffer(
+              user->getOperand(0).getType(), rewriter, loop_length, op));
+        }
+      }
+
+      if (alloc_spds_scatter.size() > original_alloc_spds_scatter_size) {
+        store_idx.push_back(i);
+        continue;
+      }
+
+      alloc_spds_gather.push_back(
+          getSpdBuffer(resultType, rewriter, loop_length, op));
+    }
+
+    auto indirection_level = op.getIndirectionLevel().value();
+    // Step2: Create Packed Memory Access Operations outside of the loop
+    // First case: If all result idx are used for store idx, we can create a
+    // PackedGenericStireOp
+    if (store_idx.size() > 0) {
+      // create an empty generic op under the op
+      // move all memacc.load that used as store idx to the new op
+      // change the store value to a memacc.load from a spd buffer
+      generatePackedMemAccOp<MemAcc::PackedGenericStoreOp>(
+          op, rewriter, llvm::ArrayRef<mlir::Value>{alloc_spds_scatter}, forOp,
+          indirection_level);
+    } else if (store_idx.size() == 0) {
+      generatePackedMemAccOp<MemAcc::PackedGenericLoadOp>(
+          op, rewriter, llvm::ArrayRef<mlir::Value>{alloc_spds_gather}, forOp,
+          indirection_level);
+      // Back to op's place, replace all uses of op with the load alloc_spds
+      rewriter.setInsertionPoint(op);
+      auto originalInductionVar =
+          forOp.getInductionVar(); // Get this from the original AffineForOp
+
+      // for each user of op, replace it with the corresponding load op
+      // generate memacc.load ops for each alloc_spd
+      // SmallVector<Value, 4> load_ops;
+      for (unsigned int i = 0; i < op.getNumResults(); i++) {
+        auto load_op =
+            rewriter.create<memref::LoadOp>(op.getLoc(), alloc_spds_gather[i],
+                                            ValueRange({originalInductionVar}));
+        op->getResult(i).replaceAllUsesWith(load_op);
+        // load_ops.push_back(load_op);
+      }
+    }
+    // Second case: If not...
 
     rewriter.eraseOp(op);
 
