@@ -24,7 +24,7 @@
 
 #define DEBUG
 #ifdef DEBUG
-#define PRINT(x) llvm::errs() << x << "\n"
+#define PRINT(x) llvm::errs() << "Pass[" << DEBUG_TYPE << "] " << x << "\n"
 #else
 #define PRINT(x)
 #endif

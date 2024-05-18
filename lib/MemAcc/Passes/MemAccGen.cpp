@@ -33,23 +33,26 @@ namespace {
 
 llvm::SmallPtrSet<Operation *, 16> deepestLoads;
 llvm::DenseMap<Operation *, llvm::SmallPtrSet<Operation *, 16>>
-    loadOpToIndirectUses;
+    loadOpToIndirectUseMap;
 llvm::DenseMap<Operation *, llvm::SmallVector<Operation *, 16>>
     loadOpToIndirectChain;
 
 // deepest load is the one without any users
 static void postProcessDeepestLoads() {
+  llvm::SmallPtrSet<Operation *, 16> toErase; // Collect elements to erase
   for (auto o : deepestLoads) {
-    for (auto i : loadOpToIndirectUses[o]) {
+    for (auto i : loadOpToIndirectUseMap[o]) {
       if (deepestLoads.count(i) > 0) {
-        deepestLoads.erase(i);
+        toErase.insert(i);
       }
     }
   }
+  for (auto i : toErase) {
+    deepestLoads.erase(i);
+  }
 }
 
-// These unary op legalizations are identical for floating-point
-// or quantized types
+
 template <typename SrcOpType, typename DestOpType>
 class ConvertArithToMemAccPattern : public OpRewritePattern<SrcOpType> {
 public:
@@ -117,13 +120,13 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
   SmallVector<Type, 4> getGenericLoadOpResultTypes(Operation *loadOp) const {
     SmallVector<Type, 4> resultTypes;
     auto &indirectLoadUseChain = loadOpToIndirectChain[loadOp];
-    loadOpToIndirectUses[loadOp].insert(loadOp);
+    loadOpToIndirectUseMap[loadOp].insert(loadOp);
     for (int i = indirectLoadUseChain.size() - 1; i >= 0; i--) {
       auto I = indirectLoadUseChain[i];
       PRINT(*I);
       for (auto U : I->getUsers()) {
         PRINT("User: " << *U);
-        if (loadOpToIndirectUses[loadOp].count(U) == 0) {
+        if (loadOpToIndirectUseMap[loadOp].count(U) == 0) {
           PRINT("External User: " << *U);
           resultTypes.push_back(I->getResult(0).getType());
           break;
@@ -245,7 +248,7 @@ void markIndirectLoadUsers(Operation *op,
 
   if (isa<memref::LoadOp>(op) || isa<affine::AffineLoadOp>(op) ||
       isa<arith::ArithDialect>(op->getDialect())) {
-    loadOpToIndirectUses[originalLoadOp].insert(op);
+    loadOpToIndirectUseMap[originalLoadOp].insert(op);
     loadOpToIndirectChain[originalLoadOp].push_back(op);
   } else {
     return;
@@ -256,6 +259,7 @@ void markIndirectLoadUsers(Operation *op,
   }
 }
 
+// analyze load operations in affine loops and mark the deepest loads
 void analyzeLoadOps(Operation *op,
                     llvm::SmallPtrSet<Operation *, 16> &deepestLoads) {
   llvm::SmallPtrSet<Operation *, 16> visited;
@@ -269,19 +273,21 @@ void analyzeLoadOps(Operation *op,
       for (auto operand : currentOp->getOperands()) {
         markIndirectLoadUsers(operand.getDefiningOp(), visited, currentOp);
       }
+      // Record all loads
       deepestLoads.insert(currentOp);
     }
   });
+  // Post-process the deepest loads to remove any loads that are not the
+  // deepest loads
   postProcessDeepestLoads();
 }
 
 void MemAccGenPass::runOnOperation() {
   deepestLoads.clear();
-  loadOpToIndirectUses.clear();
+  loadOpToIndirectUseMap.clear();
   loadOpToIndirectChain.clear();
   mlir::MLIRContext *context = getOperation()->getContext();
 
-    // analyze load operations in affine loops and mark the deepest loads
   analyzeLoadOps(getOperation(), deepestLoads);
 
   mlir::RewritePatternSet patterns(context);
