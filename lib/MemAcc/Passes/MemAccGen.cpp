@@ -1,6 +1,7 @@
 #include "PassDetails.h"
 #include "MemAcc/Dialect.h"
 #include "MemAcc/Passes/Passes.h"
+#include "MemAcc/Passes/MemAccAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -290,8 +291,13 @@ void analyzeLoadOps(Operation *op,
       deepestLoads.insert(currentOp);
     } else if (isa<affine::AffineForOp>(currentOp)) {
       DFS dfs;
-      dfs.solve(dyn_cast<affine::AffineForOp>(currentOp).getInductionVar(), currentOp);
-      dfs.print_results();
+      DFS::GatherPath gatherPath;
+      DFS::ScatterPath scatterPath;
+      dfs.analyzeLoadOps<affine::AffineForOp>(
+        dyn_cast<affine::AffineForOp>(currentOp),
+        gatherPath,
+        scatterPath
+      );
     }
   });
   // Post-process the deepest loads to remove any loads that are not the
