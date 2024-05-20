@@ -22,6 +22,7 @@ namespace mlir {
     }
 
     void DFS::GatherPath::print(){
+        PRINT("Gather Path:");
         PRINT("Indirect chain:");
         for (auto op : indirectChain) {
             PRINT("  " << *op);
@@ -36,9 +37,14 @@ namespace mlir {
     }
 
     void DFS::ScatterPath::print(){
+        PRINT("Scatter Path:");
         PRINT("Indirect chain:");
         for (auto op : indirectChain) {
             PRINT("  " << *op);
+        }
+        PRINT("Store op value:");
+        for (auto& opToValPair: storeOpVals) {
+            PRINT("  " << *opToValPair.first << " has store val " << opToValPair.second);
         }
     }
 
@@ -89,6 +95,10 @@ namespace mlir {
                 indirectChain.push_back(op);
                 indirectUseSet.insert(op);
             }
+        }
+        for (auto& opToValPair: other.storeOpVals){
+            assert(storeOpVals.count(opToValPair.first) == 0 && "Store op already exists in scatter path\n");
+            storeOpVals[opToValPair.first] = opToValPair.second;
         }
     }
 
@@ -157,7 +167,8 @@ namespace mlir {
             if (op->getOperand(2) == curr_val && depth >= 1) {
                 scatterPaths_[op] = ScatterPath{
                     currIndChain_,
-                    currIndMap_
+                    currIndMap_,
+                    llvm::DenseMap<Operation *, Value>{{op, op->getOperand(0)}}
                 };
             }
             return;

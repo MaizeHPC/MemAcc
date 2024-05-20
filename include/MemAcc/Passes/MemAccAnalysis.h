@@ -34,7 +34,7 @@ namespace mlir {
     struct ScatterPath{
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
-
+        llvm::DenseMap<Operation *, Value> storeOpVals;
         void verification();
         void merge(const ScatterPath& other);
         void print();
