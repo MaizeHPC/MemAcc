@@ -4,16 +4,14 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
+
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 #include <algorithm>
 
 
 // Use LLVM's data structures for convenience and performance
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
+
 
 #define DEBUG_TYPE "memory-access-generation"
 
@@ -123,11 +121,8 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     loadOpToIndirectUseMap[loadOp].insert(loadOp);
     for (int i = indirectLoadUseChain.size() - 1; i >= 0; i--) {
       auto I = indirectLoadUseChain[i];
-      PRINT(*I);
       for (auto U : I->getUsers()) {
-        PRINT("User: " << *U);
         if (loadOpToIndirectUseMap[loadOp].count(U) == 0) {
-          PRINT("External User: " << *U);
           resultTypes.push_back(I->getResult(0).getType());
           break;
         }
@@ -148,7 +143,6 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
     // Move the operations from the indirectLoadUseChain into the block
     for (int i = 0; i < indirectLoadUseChain.size(); i++) {
       auto clonedOp = rewriter.clone(*indirectLoadUseChain[i]);
-      PRINT("clonedOp: " << *clonedOp);
       indirectLoadUseChain[i]->getResult(0).replaceAllUsesWith(
           clonedOp->getResult(0));
       rewriter.eraseOp(indirectLoadUseChain[i]);
@@ -208,23 +202,23 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
       }
     }
 
-    PRINT("current load: " << *loadOp);
-
     // If there is no indirection and the load is not used by the any store address
     // or any index cast that used by store address
     // return failure
-    // TODO: IndirectChain is reversed! Fix this!
-    llvm::SmallVector<Operation *, 16> deepestLoadToStoreAddrChain;
-    bool usedByStoreAddr = typeOperandIdxDependsOn<affine::AffineStoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
-    if (!usedByStoreAddr){
-      usedByStoreAddr = typeOperandIdxDependsOn<memref::StoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
-    }
-    if (indirectionLevel <= 1 && !usedByStoreAddr) {
-        return failure();
-    } else if (usedByStoreAddr){
-      // append the deepestLoadToStoreAddrChain to the indirectLoadUseChain
-      indirectLoadUseChain.append(deepestLoadToStoreAddrChain.begin(), deepestLoadToStoreAddrChain.end());
-    }
+    // llvm::SmallVector<Operation *, 16> deepestLoadToStoreAddrChain;
+    // bool usedByStoreAddr = getPathToTypeOperandIdx<affine::AffineStoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
+    // if (!usedByStoreAddr){
+    //   usedByStoreAddr = getPathToTypeOperandIdx<memref::StoreOp>(loadOp, 2, deepestLoadToStoreAddrChain);
+    // }
+    // if (indirectionLevel <= 1) {
+    //     return failure();
+    // } else if (usedByStoreAddr){
+    //   // append the deepestLoadToStoreAddrChain to the indirectLoadUseChain
+    //   indirectLoadUseChain.append(deepestLoadToStoreAddrChain.begin(), deepestLoadToStoreAddrChain.end());
+    //   for (auto& op : deepestLoadToStoreAddrChain){
+    //     loadOpToIndirectUseMap[loadOp].insert(op);
+    //   }
+    // }
 
     SmallVector<Value, 4> resultVals;
 
@@ -253,7 +247,8 @@ struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
   }
 };
 
-// Modified to populate the mapping
+// return true if it's a indirect load within an affine
+// TODO: @9Tempest: check the load has dependency to induction var
 void markIndirectLoadUsers(Operation *op,
                            llvm::SmallPtrSetImpl<Operation *> &visited,
                            Operation *originalLoadOp) {
@@ -293,6 +288,10 @@ void analyzeLoadOps(Operation *op,
       }
       // Record all loads
       deepestLoads.insert(currentOp);
+    } else if (isa<affine::AffineForOp>(currentOp)) {
+      DFS dfs;
+      dfs.solve(dyn_cast<affine::AffineForOp>(currentOp).getInductionVar(), currentOp);
+      dfs.print_results();
     }
   });
   // Post-process the deepest loads to remove any loads that are not the
@@ -309,15 +308,15 @@ void MemAccGenPass::runOnOperation() {
   analyzeLoadOps(getOperation(), deepestLoads);
 
   mlir::RewritePatternSet patterns(context);
-  patterns.add<LoadOpConversionPattern<memref::LoadOp>>(context);
-  patterns.add<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
-  patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(
-      context);
-  patterns.add<ConvertArithToMemAccPattern<arith::AddIOp, MemAcc::AddIOp>>(
-      context);
-  patterns.add<ConvertArithToMemAccPattern<arith::SubIOp, MemAcc::SubIOp>>(
-      context);
-  patterns.add<ConvertArithIndexCastToMemAccIndexCastPattern>(context);
+  // patterns.add<LoadOpConversionPattern<memref::LoadOp>>(context);
+  // patterns.add<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
+  // patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(
+  //     context);
+  // patterns.add<ConvertArithToMemAccPattern<arith::AddIOp, MemAcc::AddIOp>>(
+  //     context);
+  // patterns.add<ConvertArithToMemAccPattern<arith::SubIOp, MemAcc::SubIOp>>(
+  //     context);
+  // patterns.add<ConvertArithIndexCastToMemAccIndexCastPattern>(context);
   GreedyRewriteConfig config;
   (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
                                      config);

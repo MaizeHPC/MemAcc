@@ -116,7 +116,9 @@ public:
     auto loop_length = getForLoopLength(forOp);
     SmallVector<Value, 4> alloc_spds_gather;
     SmallVector<Value, 4> alloc_spds_scatter;
-    SmallVector<size_t, 4> store_idx;
+
+    // record the result idx that used for store ops
+    DenseMap<size_t, SmallVector<Operation *, 4>> idxToDependentStoreOps;
     for (size_t i = 0; i < op->getResults().size(); i++) {
       auto result = op->getResult(i);
       auto resultType = result.getType();
@@ -124,24 +126,20 @@ public:
 
       // if the result is used for affine/memref store's idx, record the result
       // idx
+      SmallVector<Operation *, 4> dependentStoreOps;
       for (auto user : result.getUsers()) {
-        if (dyn_cast<affine::AffineStoreOp>(user) &&
+        if ((dyn_cast<affine::AffineStoreOp>(user) || dyn_cast<memref::StoreOp>(user)) &&
             user->getOperand(2) == result) {
+          dependentStoreOps.push_back(user);
           // get storeOp's value' type
           alloc_spds_scatter.push_back(getSpdBuffer(
-              user->getOperand(0).getType(), rewriter, loop_length, op));
-
-        } else if (dyn_cast<memref::StoreOp>(user) &&
-                   user->getOperand(2) == result) {
-          PRINT("Found a memref::StoreOp" << *user);
-          // get storeOp's value' type
-          alloc_spds_scatter.push_back(getSpdBuffer(
-              user->getOperand(0).getType(), rewriter, loop_length, op));
+              user->getOperand(1).getType(), rewriter, loop_length, op));
         }
       }
 
+      // if the result is used for store idx, skip generating gather buffer
       if (alloc_spds_scatter.size() > original_alloc_spds_scatter_size) {
-        store_idx.push_back(i);
+        idxToDependentStoreOps[i] = dependentStoreOps;
         continue;
       }
 
@@ -150,17 +148,39 @@ public:
     }
 
     auto indirection_level = op.getIndirectionLevel().value();
+    auto indirectionAttr = IntegerAttr::get(
+    IntegerType::get(rewriter.getContext(), 64), indirection_level);
     // Step2: Create Packed Memory Access Operations outside of the loop
     // First case: If all result idx are used for store idx, we can create a
     // PackedGenericStireOp
-    if (store_idx.size() == op->getResults().size()) {
-      // create an empty generic op under the op
-      // move all memacc.load that used as store idx to the new op
-      // change the store value to a memacc.load from a spd buffer
-      generatePackedMemAccOp<MemAcc::PackedGenericStoreOp>(
-          op, rewriter, llvm::ArrayRef<mlir::Value>{alloc_spds_scatter}, forOp,
-          indirection_level);
-    } else if (store_idx.size() == 0) {
+    if (idxToDependentStoreOps.size() == op->getResults().size()) {
+      // TODO: write it tomorrow!
+      // // create an empty generic op under the op
+      // // move all memacc.load that used as store idx to the new op
+      // // change the store value to a memacc.load from a spd buffer
+      // rewriter.setInsertionPoint(op);
+      // Operation* newOp = nullptr;
+      // llvm::SmallVector<Operation*, 16> PathFromInductVarToStoreIdx;
+      // for (auto idx : store_idx){
+      //   inductionVarGetPath(forOp.getInductionVar(), op.getRegion().front().getTerminator(), idx, PathFromInductVarToStoreIdx);
+      //   // append all dependent storeOp to the path
+      //   // change the value of the storeOp to the spdbuffer
+      //   for (auto& storeOp : idxToDependentStoreOps[idx]) {
+      //     // create a new memacc.load op to load from the spd buffer
+      //     storeOp.setOperand(0, alloc_spds_scatter[store_idx]);
+      //   }
+      //   auto newOp = rewriter.create<MemAcc::GenericLoadOp>(
+      //   loc, TypeRange{}, indirectionAttr);
+      //   auto &region = newOp.getBody();
+      //   auto *block = rewriter.createBlock(&region);
+      //   for (auto& op : PathFromInductVarToStoreIdx) {
+      //     rewriter.clone(*op);
+      //   }
+      // }
+      // generatePackedMemAccOp<MemAcc::PackedGenericStoreOp>(
+      //     newOp, rewriter, llvm::ArrayRef<mlir::Value>{alloc_spds_scatter}, forOp,
+      //     indirection_level);
+    } else if (idxToDependentStoreOps.size() == 0) {
       generatePackedMemAccOp<MemAcc::PackedGenericLoadOp>(
           op, rewriter, llvm::ArrayRef<mlir::Value>{alloc_spds_gather}, forOp,
           indirection_level);

@@ -20,7 +20,11 @@
 #include "mlir/Pass/Pass.h"
 #include "MemAcc/Ops.h"
 #include "MemAcc/Passes/Passes.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include <iostream>
 
 #define DEBUG
@@ -43,89 +47,88 @@ class PolygeistDialect;
 #define GEN_PASS_CLASSES
 #include "MemAcc/Passes/Passes.h.inc"
 
-// Function to check if opB depends on opA
-static bool  dependsOn(Operation *opA, Operation *opB) {
-    // Base case: If opB is directly using a result of opA
-    for (auto operand : opB->getOperands()) {
-        if (operand.getDefiningOp() == opA) {
-            return true;
-        }
-    }
+struct DFS{
+    struct GatherTrace{
+        llvm::SmallVector<Operation *, 16> indirectChain;
+        llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
+        llvm::SmallVector<std::pair<Operation *, int>, 16> externalUsers;
+        int indirectDepth;
+    };
+    struct ScatterTrace{
+        llvm::SmallVector<Operation *, 16> indirectChain;
+        llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
+    };
+    struct RMWTrace{
+        // TODO: Implement this!
+    };
+llvm::DenseMap<Operation *, GatherTrace> gatherTraces;
+llvm::DenseMap<Operation *, ScatterTrace> scatterTraces;
+llvm::SmallVector<Operation *, 16> curr_ind_chain;
+llvm::SmallPtrSet<Operation *, 16> curr_ind_map;
 
-    // Recursive case: Check transitive dependencies
-    for (auto result : opA->getResults()) {
-        for (auto user : result.getUsers()) {
-            if (dependsOn(user, opB)) {
-                return true;
+    void print_results() {
+        // print gather traces
+        for (auto &gather : gatherTraces) {
+            PRINT("Gather trace for: " << *gather.first);
+            PRINT("Indirect depth: " << gather.second.indirectDepth);
+            PRINT("Indirect chain:");
+            for (auto op : gather.second.indirectChain) {
+                PRINT("  " << *op);
+            }
+            PRINT("External users:");
+            for (auto user : gather.second.externalUsers) {
+                PRINT("  " << *user.first << " at operand " << user.second);
+            }
+        }
+        // print scatter traces
+        for (auto &scatter : scatterTraces) {
+            PRINT("Scatter trace for: " << *scatter.first);
+            PRINT("Indirect chain:");
+            for (auto op : scatter.second.indirectChain) {
+                PRINT("  " << *op);
             }
         }
     }
 
-    return false;
-}
+    void solve(Value curr_val, Operation *op, int depth = 0) {
+        if (isa<memref::LoadOp>(op) || isa<affine::AffineLoadOp>(op)) {
+            if (op->getOperand(1) == curr_val) {
+                if (depth >= 1){
+                    // record the chain only if it's not a streaming memacc
+                    gatherTraces[op] = GatherTrace{
+                        curr_ind_chain,
+                        curr_ind_map,
+                        {},
+                        depth
+                    };
+                }
+                curr_val = op->getResult(0);
+                depth++;
+            }
+        }
+        if (isa<arith::ArithDialect>(op->getDialect())){
+             curr_val = op->getResult(0);
+        }
+        if (isa<memref::StoreOp>(op) || isa<affine::AffineStoreOp>(op)) {
+            if (op->getOperand(2) == curr_val && depth >= 1) {
+                scatterTraces[op] = ScatterTrace{
+                    curr_ind_chain,
+                    curr_ind_map
+                };
+            }
+        }
 
-static bool operandIdxDependsOn(Operation *opA, Operation *opB, int operandIdx) {
-    // Base case: If opB is directly using a result of opA
-    if (opB->getOperand(operandIdx).getDefiningOp() == opA) {
-        return true;
-    }
-
-    // Recursive case: Check transitive dependencies
-    for (auto result : opA->getResults()) {
-        for (auto user : result.getUsers()) {
-            if (dependsOn(user, opB)) {
-                return true;
+        for (auto user : curr_val.getUsers()) {
+            if (curr_ind_map.count(user) == 0) { // Prevent infinite recursion
+                curr_ind_chain.push_back(user);
+                curr_ind_map.insert(user);
+                solve(curr_val, user, depth); // Update curr_val with user->getResult(0)
+                curr_ind_chain.pop_back();
+                curr_ind_map.erase(user);
             }
         }
     }
-
-    return false;
-}
-
-template <typename DestType>
-static bool typeOperandIdxDependsOn(Operation *opA, int operandIdx) {
-
-    // Recursive case: Check transitive dependencies
-    for (auto result : opA->getResults()) {
-        for (auto user : result.getUsers()) {
-            PRINT("Checking user: " << *user);
-            if (isa<DestType>(user) && user->getOperand(operandIdx).getDefiningOp() == opA) {
-                PRINT("Found user: " << *user);
-                return true;
-            }
-        }
-        for (auto user : result.getUsers()) {
-            if (typeOperandIdxDependsOn<DestType>(user, operandIdx)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// append the trace of the dependency to the trace vector
-template <typename DestType>
-static bool typeOperandIdxDependsOn(Operation *opA, int operandIdx, llvm::SmallVector<Operation*, 16>& trace) {
-
-    // Recursive case: Check transitive dependencies
-    for (auto result : opA->getResults()) {
-        for (auto user : result.getUsers()) {
-            PRINT("Checking user: " << *user);
-            if (isa<DestType>(user) && user->getOperand(operandIdx).getDefiningOp() == opA) {
-                PRINT("Found user: " << *user);
-                return true;
-            }
-        }
-        for (auto user : result.getUsers()) {
-            trace.push_back(user);
-            if (typeOperandIdxDependsOn<DestType>(user, operandIdx, trace)) {
-                return true;
-            }
-            trace.pop_back();
-        }
-    }
-    return false;
-}
+};
 
 } // namespace polygeist
 } // namespace mlir
