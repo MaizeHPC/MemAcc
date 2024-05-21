@@ -30,8 +30,8 @@ llvm::DenseMap<Operation *, DFS::GatherPath> forOpToGatherPath;
 llvm::DenseMap<Operation *, DFS::ScatterPath> forOpToScatterPath;
 llvm::DenseMap<Operation *, bool> forOpDone;
 
-static void get_for_to_indirect_memacc(Operation *op) {
-  // Step1: DFS to find all gather traces and scatter traces
+static void getForToIndirectAccess(Operation *op) {
+  // DFS to find all gather traces and scatter traces
   // for all AffineForOps
   op->walk([&](Operation *currentOp) {
     if (isa<affine::AffineForOp>(currentOp)) {
@@ -252,6 +252,7 @@ public:
         }
       } // end for
 
+      /// Step2: Create PackedGenericLoadOp and hoist outside of the loop
       rewriter.setInsertionPoint(forOp);
       generatePackedMemAccOp<MemAcc::PackedGenericLoadOp>(
           forOp.getLoc(), rewriter,
@@ -273,6 +274,7 @@ public:
         // change offset to InductionVar
         opToValPair.first->setOperand(2, InductionVar);
       }
+      /// Step2: Create PackedGenericStoreOp and sink outside of the loop
     } // if
 
     forOpDone[forOp] = true;
@@ -284,7 +286,7 @@ void MemAccHoistLoadsPass::runOnOperation() {
   mlir::MLIRContext *context = getOperation()->getContext();
   mlir::RewritePatternSet patterns(context);
 
-  get_for_to_indirect_memacc(getOperation());
+  getForToIndirectAccess(getOperation());
   GreedyRewriteConfig config;
   patterns.insert<PackGenericLoadOpOutsideLoop>(context);
   patterns.insert<LoadOpConversionPattern<memref::LoadOp>>(context);

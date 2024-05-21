@@ -12,7 +12,6 @@ class PatternRewriter;
 class RewritePatternSet;
 class DominanceInfo;
 namespace MemAcc{
-std::unique_ptr<Pass> createMemAccGenPass();
 std::unique_ptr<Pass> createMemAccHoistLoadsPass();
 
 // TODO: a test pass lowering memacc to llvm; it should first lower to target-aware IR then to LLVM

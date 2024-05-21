@@ -1,5 +1,4 @@
 add_mlir_dialect_library(MLIRMemAccTransforms
-  MemAccGen.cpp
   MemAccHoistLoads.cpp
   MemAccToLLVM.cpp
   MemAccAnalysis.cpp
