@@ -5,7 +5,7 @@ cgeist test.cpp -raise-scf-to-affine -O0 -S -o test.mlir -I/usr/include/x86_64-l
 read -p "Press enter to continue..."
 
 echo "[LOG]: Capturing indirect memory accesses and hoisting them out of loop (hardware-agnostic)"
-bash scripts/memacc_gen.sh &> /dev/null
+bash scripts/memacc_gen.sh &> test_memacc.mlir.log
 if [ $? -ne 0 ]; then
     echo "[ERROR]: failed to generate memory access information"
     exit 1
@@ -13,7 +13,7 @@ fi
 read -p "Press enter to continue..."
 
 echo "[LOG]: Lowering to generic memory access to target API call (hardware-specific)"
-bash scripts/lower_to_llvm.sh &> /dev/null
+bash scripts/lower_to_llvm.sh &> test_memacc.llvm.log
 if [ $? -ne 0 ]; then
     echo "[ERROR]: failed to lower to LLVM"
     exit 1

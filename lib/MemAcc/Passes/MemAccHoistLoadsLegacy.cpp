@@ -60,7 +60,6 @@ public:
     auto originalInductionVar =
         forOp.getInductionVar(); // Get this from the original AffineForOp
                                  // context
-    PRINT("Done creating PackedOp: " << *packedLoadOp);
     rewriter.setInsertionPointToStart(&packedLoadOp.getBody().front());
     DenseMap<Value, Value> InstMap;
     for (auto &I : op.getRegion().front()) {

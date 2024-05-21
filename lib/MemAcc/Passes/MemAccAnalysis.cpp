@@ -86,6 +86,9 @@ namespace mlir {
         for (auto op: toRemove){
             externUsers.erase(op);
         }
+
+        // depth is max of two depths
+        indirectDepth = std::max(indirectDepth, other.indirectDepth);
     }
 
     void DFS::ScatterPath::merge(const ScatterPath& other){
@@ -124,7 +127,7 @@ namespace mlir {
         }
     }
 
-    void DFS::solve(Value curr_val, Operation *op, int depth) {
+    void DFS::solve(Value curr_val, Operation *op, unsigned int depth) {
         // Base case0: if current op has already been processed, return
         if (gatherPaths_.count(op) || scatterPaths_.count(op)) {
             return;

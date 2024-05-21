@@ -25,7 +25,7 @@ namespace mlir {
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
         llvm::DenseMap<Operation *, GatherPathOut> externUsers;
-        int indirectDepth;
+        unsigned int indirectDepth = 0;
 
         void verification();
         void merge(const GatherPath& other);
@@ -50,7 +50,7 @@ namespace mlir {
     void print_results();
 
     private:
-    void solve(Value curr_val, Operation *op, int depth = 0);
+    void solve(Value curr_val, Operation *op, unsigned int depth = 0);
 
     public:
     template <typename ForOpType>

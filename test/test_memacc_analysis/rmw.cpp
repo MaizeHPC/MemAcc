@@ -2,7 +2,7 @@
 
 void gather(int *a, int *b, int *idx, int n) {
   for (int i = 0; i < n; i++) {
-    a[idx[i]] = b[idx[i]];
+    a[idx[i]] += b[idx[i]];
   }
 }
 
