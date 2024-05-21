@@ -35,6 +35,7 @@ namespace mlir {
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
         llvm::DenseMap<Operation *, Value> storeOpVals;
+        unsigned int indirectDepth = 0;
         void verification();
         void merge(const ScatterPath& other);
         void print();

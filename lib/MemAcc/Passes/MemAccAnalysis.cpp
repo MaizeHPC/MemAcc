@@ -103,6 +103,9 @@ namespace mlir {
             assert(storeOpVals.count(opToValPair.first) == 0 && "Store op already exists in scatter path\n");
             storeOpVals[opToValPair.first] = opToValPair.second;
         }
+
+        // update indirectDepth
+        indirectDepth = std::max(indirectDepth, other.indirectDepth);
     }
 
     /// Scatter trace must end with a store op
@@ -177,8 +180,10 @@ namespace mlir {
                 scatterPaths_[op] = ScatterPath{
                     currIndChain_,
                     currIndMap_,
-                    llvm::DenseMap<Operation *, Value>{{op, op->getOperand(0)}}
+                    llvm::DenseMap<Operation *, Value>{{op, op->getOperand(0)}},
+                    depth
                 };
+
             }
             return;
         }   
