@@ -127,6 +127,12 @@ namespace mlir {
         }
     }
 
+
+    /// Please refer to 
+    //  ``` 
+    //  Ainsworth, Sam, and Timothy M. Jones. "Software prefetching for indirect memory accesses."
+    //  2017 IEEE/ACM International Symposium on Code Generation and Optimization (CGO). IEEE, 2017.
+    //  ```
     void DFS::solve(Value curr_val, Operation *op, unsigned int depth) {
         // Base case0: if current op has already been processed, return
         if (gatherPaths_.count(op) || scatterPaths_.count(op)) {
