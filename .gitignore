@@ -91,3 +91,4 @@ pythonenv*
 /test/**/*.bc
 /test/**/*.so
 /test/**/test_memacc
+log.txt

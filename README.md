@@ -3,7 +3,7 @@ This is the code repo for the compiler that can identify indirect memory access 
 
 In general, we made the following contribution:
 * We implemented a new MLIR Dialect called `MemAcc`(memory access) to represent arbitrary indirect memory access patterns. [Code Link](include/MemAcc/MemAccOps.td)
-* We implemented an MLIR transformation pass that can identify indirect memory accesses in `affine.for` and packed them in `memacc.generic*` operations. [Code Link](lib/MemAcc/Passes/MemAccGen.cpp)
+* We implemented an MLIR analysis pass that can identify indirect memory accesses(gather, scatter) in `affine.for` operations. [Code Link](lib/MemAcc/Passes/MemAccAnalysis.cpp)
 * We implemented an MLIR transformation pass that can hoist identified indirect memory access outside of `affine.for` into `memacc.packed_generic*`. [Code Link](lib/MemAcc/Passes/MemAccHoistLoads.cpp)
 * We implemented an MLIR pass that can lower the hoisted packed memory access patterns to target-aware llvm intrinsics. [Code Link](lib/MemAcc/Passes/MemAccToLLVM.cpp)(
 Note the llvm intrinsics we added can be found here [Code Link](https://github.com/MaizeHPC/llvm-project/blob/182692a6133d3048b4fb24de98093d39c27e7d90/llvm/include/llvm/IR/Intrinsics.td#L2545-L2569)

@@ -107,7 +107,7 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
     auto loc = load.getLoc();
 
     // //convert spdalloc to llvm intrinsics alloc
-    // auto alloc = llvm::dyn_cast<AllocSPDOp>(load.getOutputs()[0].getDefiningOp());
+    // auto alloc = llvm::dyn_cast<AllocSPDOp>(load.getBufs()[0].getDefiningOp());
     // auto newTy = typeConverter->convertType(alloc.getResult().getType());
     //  // for all sizes, trace the size back to the original i64
     // auto intType = rewriter.getI64Type();
@@ -160,9 +160,9 @@ class PackedGenericLoadOpLowering : public ConvertOpToLLVMPattern<PackedGenericL
       if (isa<MemAcc::LoadOp>(I)){
         auto dataPtr = tracePtrType(I.getOperand(0), rewriter);
         if (ins_idx == load.getIndirectionLevel()){
-          assert(spd_alloc_conversion_mapping.find(load.getOutputs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
+          assert(spd_alloc_conversion_mapping.find(load.getBufs()[0]) != spd_alloc_conversion_mapping.end() && "New SPD allocation not found");
           //set data pointer for final data that would be stored into spd
-          iter = rewriter.create<LLVM::MAA_LoadAccessExt>(loc, rewriter.getI32Type(),iter, dataPtr, spd_alloc_conversion_mapping[load.getOutputs()[0]], maa);
+          iter = rewriter.create<LLVM::MAA_LoadAccessExt>(loc, rewriter.getI32Type(),iter, dataPtr, spd_alloc_conversion_mapping[load.getBufs()[0]], maa);
         } else {
           iter = rewriter.create<LLVM::MAA_LoadAccessInt>(loc, rewriter.getI32Type(),iter, dataPtr, maa);
         }

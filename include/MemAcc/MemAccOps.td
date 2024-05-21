@@ -27,14 +27,192 @@ include "mlir/IR/BuiltinAttributes.td"  // This includes the definition for Inte
 
 
 //===----------------------------------------------------------------------===//
-// packed op load outside of loops
+// packed memory access operations outside of loops
 //===----------------------------------------------------------------------===//
-def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
-    [AttrSizedOperandSegments, AutomaticAllocationScope, 
+class MemAcc_PackedBaseOp<string mnemonic, list<Trait> traits = []> :
+     MemAcc_Op<mnemonic, traits # [AttrSizedOperandSegments, AutomaticAllocationScope, 
     DeclareOpInterfaceMethods<LoopLikeOpInterface,
      ["getSingleInductionVar", "getSingleLowerBound", "getSingleStep",
       "getSingleUpperBound", "getYieldedValuesMutable",
       "replaceWithAdditionalYields"]>]>{
+  let summary = "Defines a generic memory access pattern (will be hoisted outside of loops)";
+  let description = [{
+    The MemAcc_PackedBaseOp operation is designed to encapsulate any
+    arbitrary memory access pattern, including stride, indirect, and other
+    patterns. It will be transformed from a `MemAcc.generic_load` operation inside of
+    affine.for. It takes indices array and data array as input, and it will allocate a 
+    scratchpad buffer to store the loaded data. 
+  }];
+
+  let arguments = (ins Variadic<AnyShaped>:$bufs,
+                       Variadic<Index>:$lowerBoundOperands,
+                       Variadic<Index>:$upperBoundOperands,
+                       Variadic<AnyType>:$inits,
+                       AffineMapAttr:$lowerBoundMap,
+                       AffineMapAttr:$upperBoundMap,
+                       IndexAttr:$step,
+                       I64Attr:$indirectionLevel);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$body);
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "ValueRange":$bufs, "int64_t":$lowerBound, "int64_t":$upperBound,
+      CArg<"int64_t", "1">:$step, CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"int64_t", "0">:$indirectionLevel,
+      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
+           "nullptr">:$bodyBuilder)>,
+    OpBuilder<(ins "ValueRange":$bufs, "ValueRange":$lbOperands, "AffineMap":$lbMap,
+      "ValueRange":$ubOperands, "AffineMap":$ubMap, CArg<"int64_t", "1">:$step,
+      CArg<"ValueRange", "std::nullopt">:$iterArgs,
+      CArg<"int64_t", "0">:$indirectionLevel,
+      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
+           "nullptr">:$bodyBuilder)>
+  ];
+
+    let extraClassDeclaration = [{
+    /// Defining the function type we use for building the body of affine.for.
+    using BodyBuilderFn =
+        function_ref<void(OpBuilder &, Location, Value, ValueRange)>;
+
+    static StringRef getIndirectionLevelAttrStrName() { return "indirectionLevel"; }
+    static StringRef getStepAttrStrName() { return "step"; }
+    static StringRef getLowerBoundAttrStrName() { return "lowerBoundMap"; }
+    static StringRef getUpperBoundAttrStrName() { return "upperBoundMap"; }
+
+    BlockArgument getInductionVar() { return getBody().getArgument(0); }
+    Block::BlockArgListType getRegionIterArgs() {
+      return getBody().getArguments().drop_front();
+    }
+
+    // TODO: provide iterators for the lower and upper bound operands
+    // if the current access via getLowerBound(), getUpperBound() is too slow.
+
+    /// Returns operands for the lower and upper bound maps with the operands
+    /// for the lower bound map in front of those for the upper bound map.
+    operand_range getControlOperands(){
+      return {operand_begin(), operand_begin() + getLowerBoundOperands().size() +
+                               getUpperBoundOperands().size()};
+    }
+
+    /// Set lower bound. The new bound must have the same number of operands as
+    /// the current bound map. Otherwise, 'replaceForLowerBound' should be used.
+    void setLowerBound(ValueRange lbOperands, AffineMap map){
+      assert(lbOperands.size() == map.getNumInputs());
+      assert(map.getNumResults() >= 1 && "bound map has at least one result");
+
+      SmallVector<Value, 4> newOperands(lbOperands.begin(), lbOperands.end());
+
+      auto ubOperands = getUpperBoundOperands();
+      newOperands.append(ubOperands.begin(), ubOperands.end());
+      auto iterOperands = getInits();
+      newOperands.append(iterOperands.begin(), iterOperands.end());
+      (*this)->setOperands(newOperands);
+
+      (*this)->setAttr(getLowerBoundAttrStrName(), AffineMapAttr::get(map));
+    }
+    /// Set upper bound. The new bound must not have more operands than the
+    /// current bound map. Otherwise, 'replaceForUpperBound' should be used.
+    void setUpperBound(ValueRange ubOperands, AffineMap map){
+      assert(ubOperands.size() == map.getNumInputs());
+      assert(map.getNumResults() >= 1 && "bound map has at least one result");
+
+      SmallVector<Value, 4> newOperands(getLowerBoundOperands());
+      newOperands.append(ubOperands.begin(), ubOperands.end());
+      auto iterOperands = getInits();
+      newOperands.append(iterOperands.begin(), iterOperands.end());
+      (*this)->setOperands(newOperands);
+
+      (*this)->setAttr(getUpperBoundAttrStrName(), AffineMapAttr::get(map));
+    }
+
+
+    /// Returns information about the lower bound as a single object.
+    affine::AffineBound getLowerBound();
+
+    /// Returns information about the upper bound as a single object.
+    affine::AffineBound getUpperBound();
+
+    /// Returns loop step.
+    int64_t getStepAsAPInt() {
+      return ::llvm::cast<IntegerAttr>(*(*this)->getInherentAttr(getStepAttrStrName())).getInt();
+    }
+
+    /// Set loop step.
+    void setStep(int64_t step) {
+      assert(step > 0 && "step has to be a positive integer constant");
+      auto *context = getLowerBoundMap().getContext();
+      (*this)->setAttr(StringAttr::get(context, getStepAttrStrName()),
+                       IntegerAttr::get(IndexType::get(context), step));
+    }
+
+    /// Returns number of region arguments for loop-carried values.
+    unsigned getNumRegionIterArgs() {
+      return getBody().getNumArguments() - 1;
+    }
+
+    /// Number of operands controlling the loop: lb and ub.
+    unsigned getNumControlOperands() { return getOperation()->getNumOperands() - getNumIterOperands(); }
+
+    /// Get the number of loop-carried values.
+    unsigned getNumIterOperands();
+
+    /// Returns true if the lower bound is constant.
+    bool hasConstantLowerBound(){
+      return getLowerBoundMap().isSingleConstant();
+    }
+    /// Returns true if the upper bound is constant.
+    bool hasConstantUpperBound(){
+      return getUpperBoundMap().isSingleConstant();
+    }
+    /// Returns true if both bounds are constant.
+    bool hasConstantBounds() {
+      return hasConstantLowerBound() && hasConstantUpperBound();
+    }
+    /// Returns the value of the constant lower bound.
+    /// Fails assertion if the bound is non-constant.
+    int64_t getConstantLowerBound(){
+      return getLowerBoundMap().getSingleConstantResult();
+    }
+    /// Returns the value of the constant upper bound. The upper bound is
+    /// exclusive. Fails assertion if the bound is non-constant.
+    int64_t getConstantUpperBound(){
+      return getUpperBoundMap().getSingleConstantResult();
+    }
+    /// Sets the lower bound to the given constant value.
+    void setConstantLowerBound(int64_t value){
+      setLowerBound({}, AffineMap::getConstantMap(value, getContext()));
+    }
+    /// Sets the upper bound to the given constant value.
+    void setConstantUpperBound(int64_t value){
+      setUpperBound({}, AffineMap::getConstantMap(value, getContext()));
+    }
+
+    /// Returns true if both the lower and upper bound have the same operand
+    /// lists (same operands in the same order).
+    bool matchingBoundOperandList(){
+        auto lbMap = getLowerBoundMap();
+        auto ubMap = getUpperBoundMap();
+        if (lbMap.getNumDims() != ubMap.getNumDims() ||
+            lbMap.getNumSymbols() != ubMap.getNumSymbols())
+          return false;
+
+        unsigned numOperands = lbMap.getNumInputs();
+        for (unsigned i = 0, e = lbMap.getNumInputs(); i < e; i++) {
+          // Compare Value 's.
+          if (getOperand(i) != getOperand(numOperands + i))
+            return false;
+        }
+        return true;
+    }
+
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// packed op load outside of loops
+//===----------------------------------------------------------------------===//
+def MemAcc_PackedGenericLoadOp : MemAcc_PackedBaseOp<"packed_generic_load"> {
   let summary = "Defines a generic gather pattern (will be hoisted outside of loops)";
   let description = [{
     The `MemAcc.packed_generic_load` operation is designed to encapsulate any
@@ -76,118 +254,40 @@ def MemAcc_PackedGenericLoadOp : MemAcc_Op<"packed_generic_load",
     }
     ```
   }];
-
-  let arguments = (ins Variadic<AnyShaped>:$outputs,
-                       Variadic<Index>:$lowerBoundOperands,
-                       Variadic<Index>:$upperBoundOperands,
-                       Variadic<AnyType>:$inits,
-                       AffineMapAttr:$lowerBoundMap,
-                       AffineMapAttr:$upperBoundMap,
-                       IndexAttr:$step,
-                       I64Attr:$indirectionLevel);
-  let results = (outs Variadic<AnyType>:$results);
-  let regions = (region SizedRegion<1>:$body);
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    OpBuilder<(ins "ValueRange":$outputs,"int64_t":$lowerBound, "int64_t":$upperBound,
-      CArg<"int64_t", "1">:$step, CArg<"ValueRange", "std::nullopt">:$iterArgs,
-      CArg<"int64_t", "0">:$indirectionLevel,
-      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
-           "nullptr">:$bodyBuilder)>,
-    OpBuilder<(ins "ValueRange":$outputs,"ValueRange":$lbOperands, "AffineMap":$lbMap,
-      "ValueRange":$ubOperands, "AffineMap":$ubMap, CArg<"int64_t", "1">:$step,
-      CArg<"ValueRange", "std::nullopt">:$iterArgs,
-      CArg<"int64_t", "0">:$indirectionLevel,
-      CArg<"function_ref<void(OpBuilder &, Location, Value, ValueRange)>",
-           "nullptr">:$bodyBuilder)>
-  ];
-
-    let extraClassDeclaration = [{
-    /// Defining the function type we use for building the body of affine.for.
-    using BodyBuilderFn =
-        function_ref<void(OpBuilder &, Location, Value, ValueRange)>;
-
-    static StringRef getIndirectionLevelAttrStrName() { return "indirectionLevel"; }
-    static StringRef getStepAttrStrName() { return "step"; }
-    static StringRef getLowerBoundAttrStrName() { return "lowerBoundMap"; }
-    static StringRef getUpperBoundAttrStrName() { return "upperBoundMap"; }
-
-    BlockArgument getInductionVar() { return getBody().getArgument(0); }
-    Block::BlockArgListType getRegionIterArgs() {
-      return getBody().getArguments().drop_front();
-    }
-
-    // TODO: provide iterators for the lower and upper bound operands
-    // if the current access via getLowerBound(), getUpperBound() is too slow.
-
-    /// Returns operands for the lower and upper bound maps with the operands
-    /// for the lower bound map in front of those for the upper bound map.
-    operand_range getControlOperands();
-
-    /// Set lower bound. The new bound must have the same number of operands as
-    /// the current bound map. Otherwise, 'replaceForLowerBound' should be used.
-    void setLowerBound(ValueRange operands, AffineMap map);
-    /// Set upper bound. The new bound must not have more operands than the
-    /// current bound map. Otherwise, 'replaceForUpperBound' should be used.
-    void setUpperBound(ValueRange operands, AffineMap map);
+}
 
 
-    /// Returns information about the lower bound as a single object.
-    affine::AffineBound getLowerBound();
+//===----------------------------------------------------------------------===//
+// packed op store outside of loops
+//===----------------------------------------------------------------------===//
+def MemAcc_PackedGenericStoreOp : MemAcc_PackedBaseOp<"packed_generic_store"> {
+  let summary = "Defines a generic scatter pattern (will be sinked outside of loops)";
+  let description = [{
+    The `MemAcc.packed_generic_store` operation is designed to encapsulate any
+    arbitrary scatter pattern, including stride, indirect, and other
+    patterns. It will be transformed from a `MemAcc.generic_load` operation inside of
+    affine.for. It takes indices array and data array as input, and it will allocate a 
+    scratchpad buffer to store the loaded data. 
 
-    /// Returns information about the upper bound as a single object.
-    affine::AffineBound getUpperBound();
-
-    /// Returns loop step.
-    int64_t getStepAsAPInt() {
-      return ::llvm::cast<IntegerAttr>(*(*this)->getInherentAttr(getStepAttrStrName())).getInt();
-    }
-
-    /// Set loop step.
-    void setStep(int64_t step) {
-      assert(step > 0 && "step has to be a positive integer constant");
-      auto *context = getLowerBoundMap().getContext();
-      (*this)->setAttr(StringAttr::get(context, getStepAttrStrName()),
-                       IntegerAttr::get(IndexType::get(context), step));
-    }
-
-    /// Returns number of region arguments for loop-carried values.
-    unsigned getNumRegionIterArgs() {
-      return getBody().getNumArguments() - 1;
-    }
-
-    /// Number of operands controlling the loop: lb and ub.
-    unsigned getNumControlOperands() { return getOperation()->getNumOperands() - getNumIterOperands(); }
-
-    /// Get the number of loop-carried values.
-    unsigned getNumIterOperands();
-
-    /// Returns true if the lower bound is constant.
-    bool hasConstantLowerBound();
-    /// Returns true if the upper bound is constant.
-    bool hasConstantUpperBound();
-    /// Returns true if both bounds are constant.
-    bool hasConstantBounds() {
-      return hasConstantLowerBound() && hasConstantUpperBound();
-    }
-    /// Returns the value of the constant lower bound.
-    /// Fails assertion if the bound is non-constant.
-    int64_t getConstantLowerBound();
-    /// Returns the value of the constant upper bound. The upper bound is
-    /// exclusive. Fails assertion if the bound is non-constant.
-    int64_t getConstantUpperBound();
-    /// Sets the lower bound to the given constant value.
-    void setConstantLowerBound(int64_t value);
-    /// Sets the upper bound to the given constant value.
-    void setConstantUpperBound(int64_t value);
-
-    /// Returns true if both the lower and upper bound have the same operand
-    /// lists (same operands in the same order).
-    bool matchingBoundOperandList();
+    Example:TODO: 9Tempest: provide an example
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// packed op rmw outside of loops
+//===----------------------------------------------------------------------===//
+def MemAcc_PackedGenericRmwOp : MemAcc_PackedBaseOp<"packed_generic_rmw"> {
+  let summary = "Defines a generic scatter pattern (will be sinked outside of loops)";
+  let description = [{
+    The `MemAcc.packed_generic_rmw` operation is designed to encapsulate any
+    arbitrary scatter pattern, including stride, indirect, and other
+    patterns. It will be transformed from a `MemAcc.generic_load` operation inside of
+    affine.for. It takes indices array and data array as input, and it will allocate a 
+    scratchpad buffer to rmw the loaded data. 
+
+    Example:TODO: 9Tempest: provide an example
+  }];
+}
 
 //===----------------------------------------------------------------------===//
 // generic op inside of loops
