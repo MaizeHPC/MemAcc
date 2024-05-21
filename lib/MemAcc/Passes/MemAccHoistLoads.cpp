@@ -48,14 +48,14 @@ static void getForToIndirectAccess(Operation *op) {
 
   // Print forOp -> GatherPath/SactterPath
   for (auto &forOpGatherPath : forOpToGatherPath) {
-    PRINT("ForOp:");
-    PRINT(*forOpGatherPath.first);
+    // PRINT("ForOp:");
+    // PRINT(*forOpGatherPath.first);
 
-    PRINT("GatherPath:");
+    // PRINT("GatherPath:");
     assert(forOpToGatherPath.count(forOpGatherPath.first) == 1);
     assert(forOpToScatterPath.count(forOpGatherPath.first) == 1);
-    forOpGatherPath.second.print();
-    forOpToScatterPath[forOpGatherPath.first].print();
+    // forOpGatherPath.second.print();
+    // forOpToScatterPath[forOpGatherPath.first].print();
   }
 }
 
@@ -182,7 +182,7 @@ public:
       resultVals.push_back(opToResultMap[deepestLoad.first]);
     }
     rewriter.create<MemAcc::YieldOp>(loc, resultTypes, resultVals);
-    PRINT("Done cloning: " << *packedLoadOp);
+    // PRINT("Done cloning: " << *packedLoadOp);
   }
 
   Value getSpdBuffer(Type resultType, PatternRewriter &rewriter,

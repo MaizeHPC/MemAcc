@@ -68,14 +68,14 @@ namespace mlir {
         }
 
 
-        print_results();
+        // print_results();
         // Step2: merge all gather paths from the beginning
         auto gatherPathsIter = gatherPaths_.begin();
         while (gatherPathsIter != gatherPaths_.end()){
             gatherPath.merge(gatherPathsIter->second);
             gatherPathsIter++;
         }
-        gatherPath.print();
+        // gatherPath.print();
 
         // Step3: merge all scatter path
         auto scatterPathsIter = scatterPaths_.begin();
@@ -83,7 +83,7 @@ namespace mlir {
             scatterPaths.merge(scatterPathsIter->second);
             scatterPathsIter++;
         }
-        scatterPaths.print();
+        // scatterPaths.print();
     }
 };
 
