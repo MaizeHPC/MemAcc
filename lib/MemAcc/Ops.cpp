@@ -113,7 +113,7 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
-  Value inductionVar =
+  // Value inductionVar =
       bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());
@@ -226,7 +226,7 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
-  Value inductionVar =
+  // Value inductionVar =
       bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());
@@ -339,7 +339,7 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
-  Value inductionVar =
+  // Value inductionVar =
       bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());

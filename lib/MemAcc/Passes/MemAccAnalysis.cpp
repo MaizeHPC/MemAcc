@@ -14,9 +14,17 @@
 
 namespace mlir {
 
+    static inline bool isLoadOp(Operation *op) {
+        return isa<memref::LoadOp>(op) || isa<affine::AffineLoadOp>(op) || isa<MemAcc::LoadOp>(op);
+    }
+
+    static inline bool isStoreOp(Operation *op) {
+        return isa<memref::StoreOp>(op) || isa<affine::AffineStoreOp>(op) || isa<MemAcc::StoreOp>(op);
+    }
+
     // Gather trace must end with a load op
     void DFS::GatherPath::verification() {
-        if (indirectChain.empty() || (!isa<memref::LoadOp>(indirectChain.back()) && !isa<affine::AffineLoadOp>(indirectChain.back()))) {
+        if (indirectChain.empty() || !isLoadOp(indirectChain.back())){
             assert(false &&  "Gather trace must end with a load op\n");
         }
     }
@@ -28,7 +36,7 @@ namespace mlir {
             PRINT("  " << *op);
         }
         PRINT("External users:");
-        for (auto& opToUserPair: externUsers) {
+        for (auto& opToUserPair: deepestLoadToExternUsers) {
             PRINT("  " << *opToUserPair.first << " is used by:");
             for (unsigned int i = 0; i < opToUserPair.second.users.size(); i++) {
                 PRINT("    " << *opToUserPair.second.users[i] << " at operand " << opToUserPair.second.operandIdx[i]);
@@ -60,14 +68,14 @@ namespace mlir {
 
         /// update external users
         // First merge the external users from other
-        for (auto& opToUserPair: other.externUsers){
-            if (externUsers.count(opToUserPair.first) == 0){
-                externUsers[opToUserPair.first] = opToUserPair.second;
+        for (auto& opToUserPair: other.deepestLoadToExternUsers){
+            if (deepestLoadToExternUsers.count(opToUserPair.first) == 0){
+                deepestLoadToExternUsers[opToUserPair.first] = opToUserPair.second;
             }
         }
         // Second remove the external users that exist in indirectUseSet
         llvm::SmallVector<Operation *, 16> toRemove;
-        for (auto& opToUserPair: externUsers){
+        for (auto& opToUserPair: deepestLoadToExternUsers){
             for (auto& user: opToUserPair.second.users){
                 if (indirectUseSet.count(user) > 0){
                     for (unsigned int i = 0; i < opToUserPair.second.users.size(); i++){
@@ -84,7 +92,7 @@ namespace mlir {
         }
 
         for (auto op: toRemove){
-            externUsers.erase(op);
+            deepestLoadToExternUsers.erase(op);
         }
 
         // depth is max of two depths
@@ -128,6 +136,11 @@ namespace mlir {
             scatter.second.verification();
             scatter.second.print();
         }
+        // print address dependency map
+        PRINT("Address dependency map:");
+        for (auto &addressDependency : addressDependencyMap_) {
+            PRINT("Op: " << *addressDependency.first << " depends on: " << *addressDependency.second);
+        }
     }
 
 
@@ -136,14 +149,14 @@ namespace mlir {
     //  Ainsworth, Sam, and Timothy M. Jones. "Software prefetching for indirect memory accesses."
     //  2017 IEEE/ACM International Symposium on Code Generation and Optimization (CGO). IEEE, 2017.
     //  ```
-    void DFS::solve(Value curr_val, Operation *op, unsigned int depth) {
+    void DFS::solve(Value curr_val, Operation *op, unsigned int depth, Operation* addressDependencyOp) {
         // Base case0: if current op has already been processed, return
         if (gatherPaths_.count(op) || scatterPaths_.count(op)) {
             return;
         }
 
         // Base case1: if current val is used by a load op's index, record the chain for gather trace
-        if (isa<memref::LoadOp>(op) || isa<affine::AffineLoadOp>(op)) {
+        if (isLoadOp(op)) {
             if (op->getOperand(1) == curr_val) {
                 if (depth >= 1){
                     GatherPathOut externalUsers;
@@ -164,18 +177,15 @@ namespace mlir {
                         depth
                     };
                 }
+                assert(addressDependencyMap_.count(op) == 0 && "Load op already exists in address dependency map\n");
+                addressDependencyMap_[op] = addressDependencyOp;
+                addressDependencyOp = op;
                 curr_val = op->getResult(0);
                 depth++;
             }
         }
-        // Base case2: if current val is used by an arith op, populate the current val
-        // TODO: Now it only supports unary arith op
-        //       When extending to binary arith op, need to add another path for the second operand
-        else if (isa<arith::ArithDialect>(op->getDialect())){
-             curr_val = op->getResult(0);
-        }
-        // Base case3: if current val is used by a store op, record the chain for scatter trace
-        else if (isa<memref::StoreOp>(op) || isa<affine::AffineStoreOp>(op)) {
+        // Base case2: if current val is used by a store op, record the chain for scatter trace
+        else if (isStoreOp(op)) {
             if (op->getOperand(2) == curr_val && depth >= 1) {
                 scatterPaths_[op] = ScatterPath{
                     currIndChain_,
@@ -183,10 +193,22 @@ namespace mlir {
                     llvm::DenseMap<Operation *, Value>{{op, op->getOperand(0)}},
                     depth
                 };
-
+                assert(addressDependencyMap_.count(op) == 0 && "Store op already exists in address dependency map\n");
+                addressDependencyMap_[op] = addressDependencyOp;
             }
             return;
-        }   
+        } 
+        // Base case3: if current val is used by an arith op, populate the current val
+        // TODO: Now it only supports unary arith op
+        //       When extending to binary arith op, need to add another path for the second operand
+        else if (isa<arith::ArithDialect>(op->getDialect()) || isa<MemAcc::MemAccDialect>(op->getDialect())){
+                if (op->getNumResults() > 0)
+                    curr_val = op->getResult(0);
+                // if current op is not cast op, change addressDependencyOp to current op
+                if (!isa<arith::IndexCastOp>(op) && !isa<MemAcc::IndexCastOp>(op)){
+                    addressDependencyOp = op;
+                }
+        }  
         // Base case4: if current op is an unsupported operation(i.e. a function call, if expr, ...)
         //             directly return
         else{
@@ -197,7 +219,7 @@ namespace mlir {
             if (currIndMap_.count(user) == 0) { // Prevent infinite recursion
                 currIndChain_.push_back(user);
                 currIndMap_.insert(user);
-                solve(curr_val, user, depth); // Update curr_val with user->getResult(0)
+                solve(curr_val, user, depth, addressDependencyOp); // Update curr_val with user->getResult(0)
                 currIndChain_.pop_back();
                 currIndMap_.erase(user);
             }

@@ -36,12 +36,9 @@ static void getForToIndirectAccess(Operation *op) {
   op->walk([&](Operation *currentOp) {
     if (isa<affine::AffineForOp>(currentOp)) {
       DFS dfs;
-      DFS::GatherPath gatherPath;
-      DFS::ScatterPath scatterPath;
-      dfs.analyzeLoadOps<affine::AffineForOp>(
-          dyn_cast<affine::AffineForOp>(currentOp), gatherPath, scatterPath);
-      forOpToGatherPath[currentOp] = gatherPath;
-      forOpToScatterPath[currentOp] = scatterPath;
+      dfs.analyzeLoadOps<affine::AffineForOp>(dyn_cast<affine::AffineForOp>(currentOp));
+      forOpToGatherPath[currentOp] = dfs.getGatherPath();
+      forOpToScatterPath[currentOp] = dfs.getScatterPath();
       forOpDone[currentOp] = false;
     }
   });
@@ -250,7 +247,7 @@ public:
     // result val are the keys of external users(deepest load)
     for (auto &loadToAlloc : loadToAllocs) {
       auto loadOp = loadToAlloc.first;
-      assert(gatherPath.externUsers.count(loadOp) &&
+      assert(gatherPath.deepestLoadToExternUsers.count(loadOp) &&
              "externalUsers does not contain the load op");
       auto spdBuffer = loadToAllocs[loadOp];
       if (auto memrefType = spdBuffer.getType().dyn_cast<MemRefType>()) {
@@ -307,7 +304,7 @@ public:
     llvm::DenseMap<Operation *, Value> spdBufferScatter;
     if (hasGatherPath) {
       // create spd buffer for external users of gather path
-      for (auto &opToUserPair : forOpToGatherPath[forOp].externUsers) {
+      for (auto &opToUserPair : forOpToGatherPath[forOp].deepestLoadToExternUsers) {
         rewriter.setInsertionPoint(forOp);
         for (unsigned int i = 0; i < opToUserPair.second.users.size(); i++) {
           auto user = opToUserPair.second.users[i];
