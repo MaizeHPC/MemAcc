@@ -89,6 +89,27 @@ public:
 };
 
 template <typename LoadOpType>
+struct StoreOpConversionPattern : public OpRewritePattern<LoadOpType> {
+  using OpRewritePattern<LoadOpType>::OpRewritePattern;
+
+  void rewriteStoreOp(LoadOpType storeOp, PatternRewriter &rewriter) const {
+    rewriter.replaceOpWithNewOp<MemAcc::StoreOp>(
+        storeOp, storeOp.getValue(), storeOp.getMemRef(), storeOp.getIndices());
+  }
+
+  LogicalResult matchAndRewrite(LoadOpType storeOp,
+                                PatternRewriter &rewriter) const override {
+    if (storeOp->template getParentOfType<MemAcc::PackedGenericLoadOp>() ||
+        storeOp->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
+      rewriteStoreOp(storeOp, rewriter);
+      return success();
+    } else {
+      return failure();
+    }
+  }
+};
+
+template <typename LoadOpType>
 struct LoadOpConversionPattern : public OpRewritePattern<LoadOpType> {
   using OpRewritePattern<LoadOpType>::OpRewritePattern;
 
@@ -194,7 +215,6 @@ public:
     // create empty yield op as a terminator
     rewriter.create<MemAcc::YieldOp>(loc, SmallVector<Type>{},
                                      SmallVector<Value>{});
-
   }
 
   void generatePackedMemAccLoadOp(
@@ -376,6 +396,8 @@ void MemAccHoistLoadsPass::runOnOperation() {
   patterns.insert<PackGenericLoadOpOutsideLoop>(context);
   patterns.insert<LoadOpConversionPattern<memref::LoadOp>>(context);
   patterns.insert<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
+  patterns.insert<StoreOpConversionPattern<memref::StoreOp>>(context);
+  patterns.insert<StoreOpConversionPattern<affine::AffineStoreOp>>(context);
   patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(
       context);
   patterns.add<ConvertArithToMemAccPattern<arith::AddIOp, MemAcc::AddIOp>>(

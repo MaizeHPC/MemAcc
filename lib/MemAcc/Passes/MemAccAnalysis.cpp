@@ -202,8 +202,10 @@ namespace mlir {
         // TODO: Now it only supports unary arith op
         //       When extending to binary arith op, need to add another path for the second operand
         else if (isa<arith::ArithDialect>(op->getDialect()) || isa<MemAcc::MemAccDialect>(op->getDialect())){
-                if (op->getNumResults() > 0)
-                    curr_val = op->getResult(0);
+                // If no result, return
+                if (op->getNumResults() == 0)
+                    return;
+                curr_val = op->getResult(0);
                 // if current op is not cast op, change addressDependencyOp to current op
                 if (!isa<arith::IndexCastOp>(op) && !isa<MemAcc::IndexCastOp>(op)){
                     addressDependencyOp = op;
