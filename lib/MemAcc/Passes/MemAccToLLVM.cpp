@@ -17,6 +17,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
+#include <tuple>
 
 #include "MemAcc/Passes/Passes.h"
 
@@ -69,7 +70,7 @@ static Value getPtrOpResult(Value ptr, ConversionPatternRewriter &rewriter) {
 
 // configure loop for MAA, return loop root
 template <typename PackedOpType>
-static Value configureLoop(PackedOpType packedOp,
+static std::tuple<Value, Value> configureLoop(PackedOpType packedOp,
                            ConversionPatternRewriter &rewriter, Location loc,
                            Value maa) {
   // now assuming only one operand is used for lower bound and upper bound
@@ -110,7 +111,10 @@ static Value configureLoop(PackedOpType packedOp,
           .create<LLVM::MAA_SetLoopOp>(loc, rewriter.getI32Type(), lowerBound,
                                        upperBound, step, maa)
           .getResult();
-  return root;
+
+  // Step3: Calculate loop size; assuming step is 1 for now
+  auto loopSize = rewriter.create<LLVM::SubOp>(loc, rewriter.getI64Type(), upperBound, lowerBound).getResult();
+  return std::make_tuple(root, loopSize);
 }
 
 class PackedGenericStoreOpLowering
@@ -156,7 +160,7 @@ class PackedGenericStoreOpLowering
                                                     rewriter.getContext(), 0))
                    .getResult();
     // Configure loop header for MAA
-    auto root = configureLoop(packedStoreOp, rewriter, loc, maa);
+    auto [root, loopSize] = configureLoop(packedStoreOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedStoreOp] = root;
     for (auto &I : scatterPath.indirectChain) {
@@ -198,10 +202,11 @@ class PackedGenericStoreOpLowering
             loc, dependentMAAInst, dataPtr, spdBuf, maa);
       }
     }
+    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, loopSize, maa);
 
     /// Step3: Replace current packed store op with MAA flush
     rewriter.setInsertionPointAfter(packedStoreOp);
-    rewriter.create<LLVM::MAA_Flush>(loc, rewriter.getI32Type(), root, maa);
+    rewriter.create<LLVM::MAA_Flush>(loc, rewriter.getI32Type(), root, loopSize, maa);
     rewriter.eraseOp(packedStoreOp);
     return success();
   }
@@ -246,7 +251,7 @@ class PackedGenericLoadOpLowering
                                                     rewriter.getContext(), 0))
                    .getResult();
     // Configure loop header for MAA
-    auto root = configureLoop(packedLoadOp, rewriter, loc, maa);
+    auto [root, loopSize] = configureLoop(packedLoadOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedLoadOp] = root;
     for (auto &I : gatherPath.indirectChain) {
@@ -291,7 +296,7 @@ class PackedGenericLoadOpLowering
     }
 
     // finally initiate the loop
-    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, maa);
+    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, loopSize, maa);
     rewriter.eraseOp(packedLoadOp);
     return success();
   }
