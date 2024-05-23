@@ -21,6 +21,8 @@ namespace mlir {
         llvm::SmallVector<int, 16> operandIdx;
     };
     
+    // Gather path stores the indirect chain from induction variable to several deepest load ops
+    // It also records how the result of the deepest load ops are used by other ops for rewriting
     struct GatherPath{
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
@@ -31,6 +33,9 @@ namespace mlir {
         void merge(const GatherPath& other);
         void print();
     };
+
+    // Scatter path stores the indirect chain from induction variable to several deepest store ops
+    // It also records the value of the store ops for rewriting
     struct ScatterPath{
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
@@ -40,7 +45,8 @@ namespace mlir {
         void merge(const ScatterPath& other);
         void print();
     };
-    struct RMWTrace{
+    
+    struct RMWPath{
         // TODO: Implement this!
     };
 

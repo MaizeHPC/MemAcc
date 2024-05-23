@@ -38,7 +38,9 @@ struct MemAccToLLVMPass : public MemAccToLLVMBase<MemAccToLLVMPass> {
 
 namespace {
 
-DenseMap<Value, Value> spd_alloc_conversion_mapping;
+DenseMap<Value, Value> spdAllocConversionMap;
+DenseMap<AffineForOp, Value> forOpToMAAInitMap;
+DenseMap<AffineForOp, Value> forOpToMAAStartMap;
 
 static inline Value getIntegerOpResult(Value size,
                                        ConversionPatternRewriter &rewriter) {
@@ -66,6 +68,40 @@ static Value getPtrOpResult(Value ptr, ConversionPatternRewriter &rewriter) {
         ptr);
     return castedPtr.getResult(0);
   }
+}
+
+// check whether the pakced Op has the same header of the for op
+template <typename PackedOpType>
+static bool isTheSameForOp(PackedOpType storeOp, AffineForOp forOp) {
+  return storeOp.getLowerBoundOperands() == forOp.getLowerBoundOperands() &&
+          storeOp.getUpperBoundOperands() == forOp.getUpperBoundOperands() &&
+          storeOp.getStep() == forOp.getStep();
+}
+
+template <typename PackedOpType>
+static AffineForOp getTargetForOp(PackedOpType packedOp){
+    AffineForOp targetForOp = nullptr;
+    for (auto &op : packedOp->getParentRegion()->front()) {
+      if (auto forOp = dyn_cast<AffineForOp>(op)) {
+        // Check if the store op has the same header of the for op
+        if (isTheSameForOp(packedOp, forOp)) {
+          targetForOp = forOp;
+          break;
+        }
+      }
+    }
+    return targetForOp;
+}
+
+static Value getMAAInitOpForOp(AffineForOp forOp, ConversionPatternRewriter &rewriter) {
+  if (forOpToMAAInitMap.count(forOp) == 0) {
+    auto maa = rewriter
+                 .create<LLVM::MAA_Init>(forOp.getLoc(), LLVM::LLVMPointerType::get(
+                                                  rewriter.getContext(), 0))
+                 .getResult();
+    forOpToMAAInitMap[forOp] = maa;
+  }
+  return forOpToMAAInitMap[forOp];
 }
 
 // configure loop for MAA, return loop root
@@ -121,13 +157,6 @@ class PackedGenericStoreOpLowering
     : public ConvertOpToLLVMPattern<PackedGenericStoreOp> {
   using ConvertOpToLLVMPattern<PackedGenericStoreOp>::ConvertOpToLLVMPattern;
 
-  // check whether the store Op has the same header of the for op
-  bool isTheSameForOp(PackedGenericStoreOp storeOp, AffineForOp forOp) const {
-    return storeOp.getLowerBoundOperands() == forOp.getLowerBoundOperands() &&
-           storeOp.getUpperBoundOperands() == forOp.getUpperBoundOperands() &&
-           storeOp.getStep() == forOp.getStep();
-  }
-
   LogicalResult
   matchAndRewrite(PackedGenericStoreOp packedStoreOp, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -135,16 +164,8 @@ class PackedGenericStoreOpLowering
     /// Step1: Find the affine.for op that the generic store op belongs to
     // Search through all instructions under its' parent's region to find the
     // for op
-    AffineForOp targetForOp = nullptr;
-    for (auto &op : packedStoreOp->getParentRegion()->front()) {
-      if (auto forOp = dyn_cast<AffineForOp>(op)) {
-        // Check if the store op has the same header of the for op
-        if (isTheSameForOp(packedStoreOp, forOp)) {
-          targetForOp = forOp;
-          break;
-        }
-      }
-    }
+    AffineForOp targetForOp = getTargetForOp(packedStoreOp);
+    assert(targetForOp && "Target for op not found");
 
     /// Step2: Generate MAA configuration instruction for the store op
     // Clone the store op before the for op
@@ -155,16 +176,13 @@ class PackedGenericStoreOpLowering
     auto addressDependencyMap = dfs.getAddressDependencyMap();
     auto scatterPath = dfs.getScatterPath();
     auto loc = packedStoreOp.getLoc();
-    auto maa = rewriter
-                   .create<LLVM::MAA_Init>(loc, LLVM::LLVMPointerType::get(
-                                                    rewriter.getContext(), 0))
-                   .getResult();
+
+    Value maa = getMAAInitOpForOp(targetForOp, rewriter);
     // Configure loop header for MAA
     auto [root, loopSize] = configureLoop(packedStoreOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedStoreOp] = root;
     for (auto &I : scatterPath.indirectChain) {
-      PRINT("Access is: " << *I);
       // Assert that the address dependency is found and get the dependent MAA
       // inst in a robust way
       if (isa<MemAcc::LoadOp>(I)) {
@@ -196,13 +214,19 @@ class PackedGenericStoreOpLowering
 
         // Assert the store op's val is a memacc.load from spd buffer;
         assert(isa<MemAcc::LoadOp>(scatterPath.storeOpVals[I].getDefiningOp()));
-        auto spdBuf = spd_alloc_conversion_mapping
+        auto spdBuf = spdAllocConversionMap
             [scatterPath.storeOpVals[I].getDefiningOp()->getOperand(0)];
-        auto store = rewriter.create<LLVM::MAA_StoreAccess>(
+        rewriter.create<LLVM::MAA_StoreAccess>(
             loc, dependentMAAInst, dataPtr, spdBuf, maa);
       }
     }
-    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, loopSize, maa);
+
+    if (forOpToMAAStartMap.count(targetForOp) > 0) {
+      rewriter.eraseOp(forOpToMAAStartMap[targetForOp].getDefiningOp());
+    }
+    rewriter.setInsertionPoint(targetForOp);
+    forOpToMAAStartMap[targetForOp] = rewriter.create<LLVM::MAA_Start>(
+          loc, rewriter.getI32Type(), root, loopSize, maa);
 
     /// Step3: Replace current packed store op with MAA flush
     rewriter.setInsertionPointAfter(packedStoreOp);
@@ -240,16 +264,16 @@ class PackedGenericLoadOpLowering
 
     auto loc = packedLoadOp.getLoc();
 
+    AffineForOp targetForOp = getTargetForOp(packedLoadOp);
+    assert(targetForOp && "Target for op not found");
+
     // Get dependency address information and gather path
     DFS dfs;
     dfs.analyzeLoadOps<PackedGenericLoadOp>(packedLoadOp);
     auto addressDependencyMap = dfs.getAddressDependencyMap();
     auto gatherPath = dfs.getGatherPath();
     /// Step1: initialize MAA;
-    auto maa = rewriter
-                   .create<LLVM::MAA_Init>(loc, LLVM::LLVMPointerType::get(
-                                                    rewriter.getContext(), 0))
-                   .getResult();
+    auto maa = getMAAInitOpForOp(targetForOp, rewriter);
     // Configure loop header for MAA
     auto [root, loopSize] = configureLoop(packedLoadOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
@@ -279,7 +303,7 @@ class PackedGenericLoadOpLowering
               rewriter
                   .create<LLVM::MAA_LoadAccessExt>(
                       loc, rewriter.getI32Type(), dependentMAAInst, dataPtr,
-                      spd_alloc_conversion_mapping[packedLoadOp
+                      spdAllocConversionMap[packedLoadOp
                                                        .getBufs()[spdBufIndex]],
                       maa)
                   .getResult();
@@ -296,7 +320,12 @@ class PackedGenericLoadOpLowering
     }
 
     // finally initiate the loop
-    rewriter.create<LLVM::MAA_Start>(loc, rewriter.getI32Type(), root, loopSize, maa);
+    if (forOpToMAAStartMap.count(targetForOp) > 0) {
+      rewriter.eraseOp(forOpToMAAStartMap[targetForOp].getDefiningOp());
+    }
+    rewriter.setInsertionPoint(targetForOp);
+    forOpToMAAStartMap[targetForOp] = rewriter.create<LLVM::MAA_Start>(
+        loc, rewriter.getI32Type(), root, loopSize, maa);
     rewriter.eraseOp(packedLoadOp);
     return success();
   }
@@ -321,7 +350,7 @@ class AllocSPDOpLowering : public ConvertOpToLLVMPattern<AllocSPDOp> {
     }
     auto newOp =
         rewriter.replaceOpWithNewOp<LLVM::MAASpdAllocOp>(alloc, newTy, sizes);
-    spd_alloc_conversion_mapping[alloc.getResult()] = newOp.getResult();
+    spdAllocConversionMap[alloc.getResult()] = newOp.getResult();
     return success();
   }
 };
@@ -353,7 +382,7 @@ void MemAccToLLVMPass::runOnOperation() {
   target.addIllegalOp<PackedGenericLoadOp>();
   target.addIllegalOp<PackedGenericStoreOp>();
   mlir::RewritePatternSet patterns(&getContext());
-  patterns.add<AllocSPDOpLowering>(converter, /*benefit=*/2);
+  patterns.add<AllocSPDOpLowering>(converter, /*benefit=*/3);
   patterns.add<PackedGenericLoadOpLowering>(converter, /*benefit=*/1);
   patterns.add<PackedGenericStoreOpLowering>(converter, /*benefit=*/1);
 
