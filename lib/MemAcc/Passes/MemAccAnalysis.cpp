@@ -159,10 +159,9 @@ namespace mlir {
         if (isLoadOp(op)) {
             if (op->getOperand(1) == curr_val) {
                 if (depth >= 1){
-                    GatherPathOut externalUsers;
+                    GatherUseInfo externalUsers;
                     for (auto user : op->getResult(0).getUsers()) {
                         externalUsers.users.push_back(user);
-                        externalUsers.userSet.insert(user);
                         for (unsigned int operandIndex = 0; operandIndex < user->getNumOperands(); operandIndex++) {
                             if (user->getOperand(operandIndex) == op->getResult(0)) {
                                 externalUsers.operandIdx.push_back(operandIndex);
@@ -173,7 +172,7 @@ namespace mlir {
                     gatherPaths_[op] = GatherPath{
                         currIndChain_,
                         currIndMap_,
-                        llvm::DenseMap<Operation *, GatherPathOut>{{op, externalUsers}},
+                        llvm::DenseMap<Operation *, GatherUseInfo>{{op, externalUsers}},
                         depth
                     };
                 }

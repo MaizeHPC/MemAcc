@@ -14,10 +14,14 @@
 namespace mlir {
     class DFS{
     public:
-    // record how the result of GatherPath is used by other ops
-    struct GatherPathOut{
+
+    ///GatherUseInfo
+    // Record how the result of GatherPath is used by other ops
+    // users: the ops that use the result of the deepest load ops
+    // operandIdx: the operand index of the users that use the result of the deepest load ops
+    // This structure is needed for pointing the users to load from the scratchpad
+    struct GatherUseInfo{
         llvm::SmallVector<Operation *, 16> users;
-        llvm::SmallPtrSet<Operation *, 16> userSet;
         llvm::SmallVector<int, 16> operandIdx;
     };
     
@@ -26,9 +30,8 @@ namespace mlir {
     struct GatherPath{
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
-        llvm::DenseMap<Operation *, GatherPathOut> deepestLoadToExternUsers;
+        llvm::DenseMap<Operation *, GatherUseInfo> deepestLoadToExternUsers;
         unsigned int indirectDepth = 0;
-
         void verification();
         void merge(const GatherPath& other);
         void print();
@@ -45,7 +48,7 @@ namespace mlir {
         void merge(const ScatterPath& other);
         void print();
     };
-    
+
     struct RMWPath{
         // TODO: Implement this!
     };
@@ -80,15 +83,12 @@ namespace mlir {
             currIndMap_.erase(&op);
         }
 
-
-        // print_results();
         // Step2: merge all gather paths from the beginning
         auto gatherPathsIter = gatherPaths_.begin();
         while (gatherPathsIter != gatherPaths_.end()){
             resultGatherPath_.merge(gatherPathsIter->second);
             gatherPathsIter++;
         }
-        // gatherPath.print();
 
         // Step3: merge all scatter path
         auto scatterPathsIter = scatterPaths_.begin();
@@ -96,7 +96,6 @@ namespace mlir {
             resultScatterPath_.merge(scatterPathsIter->second);
             scatterPathsIter++;
         }
-        // scatterPaths.print();
         analysisDone = true;
     }
 
