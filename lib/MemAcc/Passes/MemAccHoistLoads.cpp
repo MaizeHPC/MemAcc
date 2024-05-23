@@ -36,12 +36,9 @@ static void getForToIndirectAccess(Operation *op) {
   op->walk([&](Operation *currentOp) {
     if (isa<affine::AffineForOp>(currentOp)) {
       DFS dfs;
-      DFS::GatherPath gatherPath;
-      DFS::ScatterPath scatterPath;
-      dfs.analyzeLoadOps<affine::AffineForOp>(
-          dyn_cast<affine::AffineForOp>(currentOp), gatherPath, scatterPath);
-      forOpToGatherPath[currentOp] = gatherPath;
-      forOpToScatterPath[currentOp] = scatterPath;
+      dfs.analyzeLoadOps<affine::AffineForOp>(dyn_cast<affine::AffineForOp>(currentOp));
+      forOpToGatherPath[currentOp] = dfs.getGatherPath();
+      forOpToScatterPath[currentOp] = dfs.getScatterPath();
       forOpDone[currentOp] = false;
     }
   });
@@ -65,8 +62,8 @@ public:
   using OpRewritePattern<SrcOpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(SrcOpType op,
                                 PatternRewriter &rewriter) const override {
-    if (op->template getParentOfType<MemAcc::PackedGenericLoadOp>()
-    || op->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
+    if (op->template getParentOfType<MemAcc::PackedGenericLoadOp>() ||
+        op->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
       rewriter.replaceOpWithNewOp<DestOpType>(op, op.getResult().getType(),
                                               op.getOperands());
       return success();
@@ -81,13 +78,34 @@ public:
   using OpRewritePattern<arith::IndexCastOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(arith::IndexCastOp op,
                                 PatternRewriter &rewriter) const override {
-    if (op->template getParentOfType<MemAcc::PackedGenericLoadOp>()
-    || op->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
+    if (op->template getParentOfType<MemAcc::PackedGenericLoadOp>() ||
+        op->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
       rewriter.replaceOpWithNewOp<MemAcc::IndexCastOp>(
           op, op.getResult().getType(), op.getOperand());
       return success();
     }
     return failure();
+  }
+};
+
+template <typename LoadOpType>
+struct StoreOpConversionPattern : public OpRewritePattern<LoadOpType> {
+  using OpRewritePattern<LoadOpType>::OpRewritePattern;
+
+  void rewriteStoreOp(LoadOpType storeOp, PatternRewriter &rewriter) const {
+    rewriter.replaceOpWithNewOp<MemAcc::StoreOp>(
+        storeOp, storeOp.getValue(), storeOp.getMemRef(), storeOp.getIndices());
+  }
+
+  LogicalResult matchAndRewrite(LoadOpType storeOp,
+                                PatternRewriter &rewriter) const override {
+    if (storeOp->template getParentOfType<MemAcc::PackedGenericLoadOp>() ||
+        storeOp->template getParentOfType<MemAcc::PackedGenericStoreOp>()) {
+      rewriteStoreOp(storeOp, rewriter);
+      return success();
+    } else {
+      return failure();
+    }
   }
 };
 
@@ -128,19 +146,94 @@ public:
     return ub;
   }
 
-  template <typename PackedOpType>
-  void generatePackedMemAccOp(Location loc, PatternRewriter &rewriter,
-                              llvm::ArrayRef<mlir::Value> alloc_spds_ref,
-                              AffineForOp forOp,
-                              const DFS::GatherPath &gatherPath,
-                              unsigned int indirectLevel) const {
-
-    llvm::SmallVector<Operation *, 16> indirectChain = gatherPath.indirectChain;
+  void generatePackedMemAccStoreOp(
+      Location loc, PatternRewriter &rewriter,
+      llvm::DenseMap<Operation *, mlir::Value> &storeToAllocs,
+      AffineForOp forOp, const DFS::ScatterPath &scatterPath,
+      unsigned int indirectLevel) const {
+    llvm::SmallVector<Operation *, 16> indirectChain =
+        scatterPath.indirectChain;
+    llvm::SmallVector<mlir::Value> alloc_spds;
+    for (auto storeToAlloc : storeToAllocs) {
+      alloc_spds.push_back(storeToAlloc.second);
+    }
+    llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
     // Create PackedOpType outside of the loop
-    auto packedLoadOp = rewriter.create<PackedOpType>(
+    auto packedStoreOp = rewriter.create<MemAcc::PackedGenericStoreOp>(
         loc, alloc_spds_ref, forOp.getLowerBoundOperands(),
         forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
-        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(), indirectLevel);
+        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
+        indirectLevel);
+
+    // for each instruction in GenericLoadOp, clone them into
+    // PackedOpType, replace all users of AffineForOp's induction
+    // variable with the induction variable of PackedOpType
+    auto newInductionVar = packedStoreOp.getInductionVar();
+    auto originalInductionVar =
+        forOp.getInductionVar(); // Get this from the original AffineForOp
+                                 // context
+    rewriter.setInsertionPointToStart(&packedStoreOp.getBody().front());
+
+    // record the mapping of old instruction -> new instruction
+    DenseMap<Operation *, Value> opToResultMap;
+    for (auto I : indirectChain) {
+      Operation *newI;
+      // If the instruction is a store op, replace the store value with the load
+      // to new induction variable
+      if (isa<memref::StoreOp>(I) || isa<affine::AffineStoreOp>(I)) {
+        // 1. create load op
+        assert(storeToAllocs.count(I) &&
+               "storeToAllocs does not contain the store op");
+        auto loadOp = rewriter.create<memref::LoadOp>(loc, storeToAllocs[I],
+                                                      newInductionVar);
+        newI = rewriter.clone(*I);
+        // 2. replace the store value with the load op
+        newI->setOperand(0, loadOp.getResult());
+      } else {
+        newI = rewriter.clone(*I);
+      }
+
+      // record the mapping of old instruction -> new instruction
+      if (newI->getNumResults() > 0) {
+        opToResultMap[I] = newI->getResult(0);
+      }
+
+      // replace the operands of the new instruction with the new induction
+      // variable/new results
+      for (unsigned idx = 0; idx < newI->getNumOperands(); ++idx) {
+        // Check if the operand is the original induction variable
+        if (newI->getOperand(idx) == originalInductionVar) {
+          // Replace the operand with the new induction variable
+          newI->setOperand(idx, newInductionVar);
+        } else if (opToResultMap.count(newI->getOperand(idx).getDefiningOp())) {
+          newI->setOperand(
+              idx, opToResultMap[newI->getOperand(idx).getDefiningOp()]);
+        }
+      }
+    }
+
+    // create empty yield op as a terminator
+    rewriter.create<MemAcc::YieldOp>(loc, SmallVector<Type>{},
+                                     SmallVector<Value>{});
+  }
+
+  void generatePackedMemAccLoadOp(
+      Location loc, PatternRewriter &rewriter,
+      llvm::DenseMap<Operation *, mlir::Value> &loadToAllocs, AffineForOp forOp,
+      const DFS::GatherPath &gatherPath, unsigned int indirectLevel) const {
+
+    llvm::SmallVector<Operation *, 16> indirectChain = gatherPath.indirectChain;
+    llvm::SmallVector<mlir::Value> alloc_spds;
+    for (auto loadToAlloc : loadToAllocs) {
+      alloc_spds.push_back(loadToAlloc.second);
+    }
+    llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
+    // Create PackedOpType outside of the loop
+    auto packedLoadOp = rewriter.create<MemAcc::PackedGenericLoadOp>(
+        loc, alloc_spds_ref, forOp.getLowerBoundOperands(),
+        forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
+        forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
+        indirectLevel);
 
     // for each instruction in GenericLoadOp, clone them into
     // PackedOpType, replace all users of AffineForOp's induction
@@ -150,6 +243,8 @@ public:
         forOp.getInductionVar(); // Get this from the original AffineForOp
                                  // context
     rewriter.setInsertionPointToStart(&packedLoadOp.getBody().front());
+
+    // record the mapping of old instruction -> new instruction
     DenseMap<Operation *, Value> opToResultMap;
     for (auto I : indirectChain) {
       auto newI = rewriter.clone(*I);
@@ -162,27 +257,28 @@ public:
         } else if (opToResultMap.count(newI->getOperand(idx).getDefiningOp())) {
           newI->setOperand(
               idx, opToResultMap[newI->getOperand(idx).getDefiningOp()]);
-        } // assert operand is not in the old for loop
+        }
       }
     }
-
-    /// Insert a memacc.yield op at the end of the packed load op
+    /// Step3: Insert a memacc.yield op at the end of the packed load op
     // result type of the yield is the element type of each spd buffer
     SmallVector<Type, 4> resultTypes;
-    for (auto spdBuffer : alloc_spds_ref) {
+    SmallVector<Value, 4> resultVals;
+    // result val are the keys of external users(deepest load)
+    for (auto &loadToAlloc : loadToAllocs) {
+      auto loadOp = loadToAlloc.first;
+      assert(gatherPath.deepestLoadToExternUsers.count(loadOp) &&
+             "externalUsers does not contain the load op");
+      auto spdBuffer = loadToAllocs[loadOp];
       if (auto memrefType = spdBuffer.getType().dyn_cast<MemRefType>()) {
         resultTypes.push_back(memrefType.getElementType());
       } else {
         assert(false && "Unexpected type for spd buffer");
       }
+      resultVals.push_back(opToResultMap[loadOp]);
     }
-    SmallVector<Value, 4> resultVals;
-    // result val are the keys of external users(deepest load)
-    for (auto deepestLoad : gatherPath.externUsers) {
-      resultVals.push_back(opToResultMap[deepestLoad.first]);
-    }
+
     rewriter.create<MemAcc::YieldOp>(loc, resultTypes, resultVals);
-    // PRINT("Done cloning: " << *packedLoadOp);
   }
 
   Value getSpdBuffer(Type resultType, PatternRewriter &rewriter,
@@ -224,11 +320,11 @@ public:
     // the type of the alloc_spd is the same as the result type of the generic
     // op also record the result idx that used for store idx
     Value loopLength = getForLoopLength(forOp);
-    llvm::SmallVector<Value> spdBufferGather;
-    llvm::SmallVector<Value> spdBufferScatter;
+    llvm::DenseMap<Operation *, Value> spdBufferGather;
+    llvm::DenseMap<Operation *, Value> spdBufferScatter;
     if (hasGatherPath) {
       // create spd buffer for external users of gather path
-      for (auto &opToUserPair : forOpToGatherPath[forOp].externUsers) {
+      for (auto &opToUserPair : forOpToGatherPath[forOp].deepestLoadToExternUsers) {
         rewriter.setInsertionPoint(forOp);
         for (unsigned int i = 0; i < opToUserPair.second.users.size(); i++) {
           auto user = opToUserPair.second.users[i];
@@ -248,33 +344,42 @@ public:
                                           ValueRange({InductionVar}))
                   .getResult();
           user->setOperand(operandIdx, newOperand);
-          spdBufferGather.push_back(spdBuffer);
+          spdBufferGather[opToUserPair.first] = spdBuffer;
         }
       } // end for
 
       /// Step2: Create PackedGenericLoadOp and hoist outside of the loop
       rewriter.setInsertionPoint(forOp);
-      generatePackedMemAccOp<MemAcc::PackedGenericLoadOp>(
-          forOp.getLoc(), rewriter,
-          llvm::ArrayRef<mlir::Value>{spdBufferGather}, forOp,
-          forOpToGatherPath[forOp], forOpToGatherPath[forOp].indirectDepth);
+      generatePackedMemAccLoadOp(forOp.getLoc(), rewriter, spdBufferGather,
+                                 forOp, forOpToGatherPath[forOp],
+                                 forOpToGatherPath[forOp].indirectDepth);
     }
     if (hasScatterPath) {
-      // create spd buffer for store values of scatter path
+      rewriter.setInsertionPoint(forOp);
+      /// Step1: create spd buffer for store values of scatter path
       for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
-        rewriter.setInsertionPoint(forOp);
         Value spdBuffer = getSpdBuffer(opToValPair.second.getType(), rewriter,
                                        loopLength, forOp->getLoc());
 
         // replace the original StoreOp to store to spd buffer
         // assume last instruction is a StoreOp
+        spdBufferScatter[opToValPair.first] = spdBuffer;
+      }
 
+      /// Step2: Generate packed store op and sink outside after the loop
+      rewriter.setInsertionPointAfter(forOp);
+      generatePackedMemAccStoreOp(forOp.getLoc(), rewriter, spdBufferScatter,
+                                  forOp, forOpToScatterPath[forOp],
+                                  forOpToScatterPath[forOp].indirectDepth);
+
+      /// Step3: Change original store operations to store to spd buffer with
+      /// induction var
+      for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
         // change base address to InductionVar
-        opToValPair.first->setOperand(1, spdBuffer);
+        opToValPair.first->setOperand(1, spdBufferScatter[opToValPair.first]);
         // change offset to InductionVar
         opToValPair.first->setOperand(2, InductionVar);
       }
-      /// Step2: Create PackedGenericStoreOp and sink outside of the loop
     } // if
 
     forOpDone[forOp] = true;
@@ -291,6 +396,8 @@ void MemAccHoistLoadsPass::runOnOperation() {
   patterns.insert<PackGenericLoadOpOutsideLoop>(context);
   patterns.insert<LoadOpConversionPattern<memref::LoadOp>>(context);
   patterns.insert<LoadOpConversionPattern<affine::AffineLoadOp>>(context);
+  patterns.insert<StoreOpConversionPattern<memref::StoreOp>>(context);
+  patterns.insert<StoreOpConversionPattern<affine::AffineStoreOp>>(context);
   patterns.add<ConvertArithToMemAccPattern<arith::MulIOp, MemAcc::MulIOp>>(
       context);
   patterns.add<ConvertArithToMemAccPattern<arith::AddIOp, MemAcc::AddIOp>>(

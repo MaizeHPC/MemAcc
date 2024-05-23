@@ -3,7 +3,7 @@ This is the code repo for the compiler that can identify indirect memory access 
 
 In general, we made the following contribution:
 * We implemented a new MLIR Dialect called `MemAcc`(memory access) to represent arbitrary indirect memory access patterns. [Code Link](include/MemAcc/MemAccOps.td)
-* We implemented an MLIR analysis pass that can identify indirect memory accesses(gather, scatter) in `affine.for` operations. [Code Link](lib/MemAcc/Passes/MemAccAnalysis.cpp)
+* We implemented an MLIR analysis pass that can identify indirect memory accesses(gather, scatter) and generate address dependency graph in arbitrary ForOps(affine.for, MemAcc.packed_generic_load...). [Code Link](lib/MemAcc/Passes/MemAccAnalysis.cpp)
 * We implemented an MLIR transformation pass that can hoist identified indirect memory access outside of `affine.for` into `memacc.packed_generic*`. [Code Link](lib/MemAcc/Passes/MemAccHoistLoads.cpp)
 * We implemented an MLIR pass that can lower the hoisted packed memory access patterns to target-aware llvm intrinsics. [Code Link](lib/MemAcc/Passes/MemAccToLLVM.cpp)(
 Note the llvm intrinsics we added can be found here [Code Link](https://github.com/MaizeHPC/llvm-project/blob/182692a6133d3048b4fb24de98093d39c27e7d90/llvm/include/llvm/IR/Intrinsics.td#L2545-L2569)
@@ -24,14 +24,19 @@ mkdir build
 cd build
 cmake -G "Unix Makefiles"  ../llvm-project/llvm   -DLLVM_ENABLE_PROJECTS="clang;mlir"   -DLLVM_EXTERNAL_PROJECTS="polygeist"   -DLLVM_EXTERNAL_POLYGEIST_SOURCE_DIR=..   -DLLVM_TARGETS_TO_BUILD="host"   -DLLVM_ENABLE_ASSERTIONS=ON   -DCMAKE_BUILD_TYPE=Release
 ```
-3. Run the end-to-end gather kernel demo(in each step, please note that the IR files will be generated, press enter to continue)
+3. Run the end-to-end test for different microbenchmarks
 ```sh
-cd test/demo_may_8
-bash test_all.sh
+cd test/end_to_end_test
+bash test_all.sh RELEASE CLEAN
 ```
+Note that the `test_all.sh` takes two arguments, the first one is the build type, and the second one is whether to clean the build directory before running the test. The build type can be either `DEBUG` or `RELEASE`. The second argument can be either `CLEAN` or `UNCLEAN`. 
+
+If you choose `DEBUG`, it will generate MAA's execution log, which can be used to debug the correctness of MAA. If you choose `RELEASE`, it will not generate the execution log.
+
+If you choose `CLEAN`, it will remove the generated intermediate files and the generated binary files. If you choose `UNCLEAN`, it will keep the generated intermediate files and the generated binary files.
 
 ## Future work checklist
-- [] Implement the scatter kernels
+- [x] Implement the scatter kernels
 - [] Our indirect memory access pass should support arbitrary loop transformation
 - [] Support nested loop
 - [] Support conditions inside of loop
