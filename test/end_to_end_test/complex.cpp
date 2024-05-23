@@ -24,9 +24,6 @@ int main() {
 
     kernel(a1, a2, b1, b2, N, c, d, e);
 
-    int a1_expected[4] = {4, 3, 2, 1};
-    int a2_expected[4] = {4, 6, 6, 4};
-
     // verification
     for (int i = 0; i < 4; i++) {
         printf("a1[%d] = %d\n", i, a1[i]);
