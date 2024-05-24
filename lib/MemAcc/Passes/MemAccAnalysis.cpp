@@ -56,6 +56,28 @@ namespace mlir {
         }
     }
 
+    void DFS::filterGatherPath(){
+        // Assuming scatter paths are merged
+        llvm::SmallVector<Operation*, 16> gatherPathsToRemove;
+        for (auto& gatherPathPair: gatherPaths_){
+            auto& gatherPath = gatherPathPair.second;
+            auto loadOp = gatherPathPair.first;
+            int numUsers = gatherPath.deepestLoadToExternUsers[loadOp].users.size();
+            assert(numUsers > 0 && "Gather path must have at least one user\n");
+            auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
+            if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) 
+                && numUsers == 1){
+                gatherPathsToRemove.push_back(loadOp);
+            }
+            // PRINT("Gather path for: " << *loadOp);
+            // gatherPath.print();
+            // PRINT("Num users: " << numUsers);
+            // PRINT("User: " << *user);
+        }
+        for (int i = gatherPathsToRemove.size() - 1; i >= 0; i--){
+            gatherPaths_.erase(gatherPathsToRemove[i]);
+        }
+    }
 
     void DFS::GatherPath::merge(const GatherPath& other){
         // update indirectChain/set

@@ -49,6 +49,10 @@ namespace mlir {
         void print();
     };
 
+    // Start from a ScatterPath: 
+    // Target: a store Op with value that is a binary arith.* op
+    //         one of the operands is a load op
+    //         the load op has the same value as the address offset of the store op
     struct RMWPath{
         // TODO: Implement this!
     };
@@ -66,7 +70,7 @@ namespace mlir {
     ScatterPath resultScatterPath_;
     bool analysisDone = false;
     void solve(Value curr_val, Operation *op, unsigned int depth = 0, Operation* addressDependencyOp = nullptr);
-
+    void filterGatherPath();
     public:
     void print_results();
     template <typename ForOpType>
@@ -83,19 +87,23 @@ namespace mlir {
             currIndMap_.erase(&op);
         }
 
-        // Step2: merge all gather paths from the beginning
+        // Step2: merge all scatter path
+        auto scatterPathsIter = scatterPaths_.begin();
+        while (scatterPathsIter != scatterPaths_.end()){
+            resultScatterPath_.merge(scatterPathsIter->second);
+            scatterPathsIter++;
+        }
+
+        // Step3: filter out gather paths that are only used for address of scatter paths
+        filterGatherPath();
+
+        // Step4: merge all gather paths from the beginning
         auto gatherPathsIter = gatherPaths_.begin();
         while (gatherPathsIter != gatherPaths_.end()){
             resultGatherPath_.merge(gatherPathsIter->second);
             gatherPathsIter++;
         }
 
-        // Step3: merge all scatter path
-        auto scatterPathsIter = scatterPaths_.begin();
-        while (scatterPathsIter != scatterPaths_.end()){
-            resultScatterPath_.merge(scatterPathsIter->second);
-            scatterPathsIter++;
-        }
         analysisDone = true;
     }
 

@@ -45,14 +45,14 @@ static void getForToIndirectAccess(Operation *op) {
 
   // Print forOp -> GatherPath/SactterPath
   for (auto &forOpGatherPath : forOpToGatherPath) {
-    // PRINT("ForOp:");
-    // PRINT(*forOpGatherPath.first);
+    PRINT("ForOp:");
+    PRINT(*forOpGatherPath.first);
 
-    // PRINT("GatherPath:");
+    PRINT("GatherPath:");
     assert(forOpToGatherPath.count(forOpGatherPath.first) == 1);
     assert(forOpToScatterPath.count(forOpGatherPath.first) == 1);
-    // forOpGatherPath.second.print();
-    // forOpToScatterPath[forOpGatherPath.first].print();
+    forOpGatherPath.second.print();
+    forOpToScatterPath[forOpGatherPath.first].print();
   }
 }
 
@@ -322,6 +322,33 @@ public:
     Value loopLength = getForLoopLength(forOp);
     llvm::DenseMap<Operation *, Value> spdBufferGather;
     llvm::DenseMap<Operation *, Value> spdBufferScatter;
+    if (hasScatterPath) {
+      rewriter.setInsertionPoint(forOp);
+      /// Step1: create spd buffer for store values of scatter path
+      for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
+        Value spdBuffer = getSpdBuffer(opToValPair.second.getType(), rewriter,
+                                       loopLength, forOp->getLoc());
+
+        // replace the original StoreOp to store to spd buffer
+        // assume last instruction is a StoreOp
+        spdBufferScatter[opToValPair.first] = spdBuffer;
+      }
+
+      /// Step2: Generate packed store op and sink outside after the loop
+      rewriter.setInsertionPointAfter(forOp);
+      generatePackedMemAccStoreOp(forOp.getLoc(), rewriter, spdBufferScatter,
+                                  forOp, forOpToScatterPath[forOp],
+                                  forOpToScatterPath[forOp].indirectDepth);
+
+      /// Step3: Change original store operations to store to spd buffer with
+      /// induction var
+      for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
+        // change base address to InductionVar
+        opToValPair.first->setOperand(1, spdBufferScatter[opToValPair.first]);
+        // change offset to InductionVar
+        opToValPair.first->setOperand(2, InductionVar);
+      }
+    } // if
     if (hasGatherPath) {
       // create spd buffer for external users of gather path
       for (auto &opToUserPair : forOpToGatherPath[forOp].deepestLoadToExternUsers) {
@@ -354,33 +381,6 @@ public:
                                  forOp, forOpToGatherPath[forOp],
                                  forOpToGatherPath[forOp].indirectDepth);
     }
-    if (hasScatterPath) {
-      rewriter.setInsertionPoint(forOp);
-      /// Step1: create spd buffer for store values of scatter path
-      for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
-        Value spdBuffer = getSpdBuffer(opToValPair.second.getType(), rewriter,
-                                       loopLength, forOp->getLoc());
-
-        // replace the original StoreOp to store to spd buffer
-        // assume last instruction is a StoreOp
-        spdBufferScatter[opToValPair.first] = spdBuffer;
-      }
-
-      /// Step2: Generate packed store op and sink outside after the loop
-      rewriter.setInsertionPointAfter(forOp);
-      generatePackedMemAccStoreOp(forOp.getLoc(), rewriter, spdBufferScatter,
-                                  forOp, forOpToScatterPath[forOp],
-                                  forOpToScatterPath[forOp].indirectDepth);
-
-      /// Step3: Change original store operations to store to spd buffer with
-      /// induction var
-      for (auto &opToValPair : forOpToScatterPath[forOp].storeOpVals) {
-        // change base address to InductionVar
-        opToValPair.first->setOperand(1, spdBufferScatter[opToValPair.first]);
-        // change offset to InductionVar
-        opToValPair.first->setOperand(2, InductionVar);
-      }
-    } // if
 
     forOpDone[forOp] = true;
     return success();
