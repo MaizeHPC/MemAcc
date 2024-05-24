@@ -1,6 +1,6 @@
 #include "MemAcc/Ops.h"
-#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/TypeUtilities.h"
 using namespace mlir;
 using namespace MemAcc;
 #include "MemAcc/Dialect.h"
@@ -55,22 +55,23 @@ static bool areIndexCastCompatible(TypeRange inputs, TypeRange bufs) {
          (srcType.isSignlessInteger() && dstType.isIndex());
 }
 
-bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs,
-                                            TypeRange bufs) {
+bool MemAcc::IndexCastOp::areCastCompatible(TypeRange inputs, TypeRange bufs) {
   return areIndexCastCompatible(inputs, bufs);
 }
 
-// TODO:9tempest: Refactor builder for packedops by creating a base class in Ops.h
+// TODO:9tempest: Refactor builder for packedops by creating a base class in
+// Ops.h
 //===----------------------------------------------------------------------===//
 // PackedGenericLoadOp
 //===----------------------------------------------------------------------===//
-// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
-// / bodyBuilder are empty/null, we include default terminator op.
+// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If
+// iterArgs and / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange bufs,
-                        ValueRange lbOperands, AffineMap lbMap,
-                        ValueRange ubOperands, AffineMap ubMap, int64_t step,
-                        ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
+                                ValueRange bufs, ValueRange lbOperands,
+                                AffineMap lbMap, ValueRange ubOperands,
+                                AffineMap ubMap, int64_t step,
+                                ValueRange iterArgs, int64_t indirection_level,
+                                BodyBuilderFn bodyBuilder) {
   assert(((!lbMap && lbOperands.empty()) ||
           lbOperands.size() == lbMap.getNumInputs()) &&
          "lower bound operand count does not match the affine map");
@@ -83,7 +84,7 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
     result.addTypes(val.getType());
 
   auto indirection_level_attr = IntegerAttr::get(
-    IntegerType::get(builder.getContext(), 64), indirection_level);
+      IntegerType::get(builder.getContext(), 64), indirection_level);
   result.addAttribute(getIndirectionLevelAttrStrName(), indirection_level_attr);
 
   // Add an attribute for the step.
@@ -102,19 +103,19 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
 
   result.addOperands(iterArgs);
 
-  result.addAttribute("operandSegmentSizes",
-                      builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(bufs.size()),
-                           static_cast<int32_t>(lbOperands.size()),
-                           static_cast<int32_t>(ubOperands.size()),
-                           static_cast<int32_t>(iterArgs.size())}));
+  result.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(bufs.size()),
+                                    static_cast<int32_t>(lbOperands.size()),
+                                    static_cast<int32_t>(ubOperands.size()),
+                                    static_cast<int32_t>(iterArgs.size())}));
   // Create a region and a block for the body.  The argument of the region is
   // the loop induction variable.
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
   // Value inductionVar =
-      bodyBlock.addArgument(builder.getIndexType(), result.location);
+  bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());
 
@@ -131,13 +132,15 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
-                        int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
-                        BodyBuilderFn bodyBuilder) {
+void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
+                                ValueRange bufs, int64_t lb, int64_t ub,
+                                int64_t step, ValueRange iterArgs,
+                                int64_t indirection_level,
+                                BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
-               bodyBuilder);
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs,
+               indirection_level, bodyBuilder);
 }
 
 std::optional<OpFoldResult> PackedGenericLoadOp::getSingleStep() {
@@ -152,7 +155,9 @@ std::optional<OpFoldResult> PackedGenericLoadOp::getSingleUpperBound() {
   return OpFoldResult(b.getI64IntegerAttr(getConstantUpperBound()));
 }
 
-SmallVector<Region *> PackedGenericLoadOp::getLoopRegions() { return {&getBody()}; }
+SmallVector<Region *> PackedGenericLoadOp::getLoopRegions() {
+  return {&getBody()};
+}
 
 std::optional<Value> PackedGenericLoadOp::getSingleInductionVar() {
   return getInductionVar();
@@ -177,13 +182,14 @@ FailureOr<LoopLikeOpInterface> PackedGenericLoadOp::replaceWithAdditionalYields(
 //===----------------------------------------------------------------------===//
 // PackedGenericStoreOp
 //===----------------------------------------------------------------------===//
-// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
-// / bodyBuilder are empty/null, we include default terminator op.
+// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If
+// iterArgs and / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange bufs,
-                        ValueRange lbOperands, AffineMap lbMap,
-                        ValueRange ubOperands, AffineMap ubMap, int64_t step,
-                        ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
+                                 ValueRange bufs, ValueRange lbOperands,
+                                 AffineMap lbMap, ValueRange ubOperands,
+                                 AffineMap ubMap, int64_t step,
+                                 ValueRange iterArgs, int64_t indirection_level,
+                                 BodyBuilderFn bodyBuilder) {
   assert(((!lbMap && lbOperands.empty()) ||
           lbOperands.size() == lbMap.getNumInputs()) &&
          "lower bound operand count does not match the affine map");
@@ -196,7 +202,7 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
     result.addTypes(val.getType());
 
   auto indirection_level_attr = IntegerAttr::get(
-    IntegerType::get(builder.getContext(), 64), indirection_level);
+      IntegerType::get(builder.getContext(), 64), indirection_level);
   result.addAttribute(getIndirectionLevelAttrStrName(), indirection_level_attr);
 
   // Add an attribute for the step.
@@ -215,19 +221,19 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
 
   result.addOperands(iterArgs);
 
-  result.addAttribute("operandSegmentSizes",
-                      builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(bufs.size()),
-                           static_cast<int32_t>(lbOperands.size()),
-                           static_cast<int32_t>(ubOperands.size()),
-                           static_cast<int32_t>(iterArgs.size())}));
+  result.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(bufs.size()),
+                                    static_cast<int32_t>(lbOperands.size()),
+                                    static_cast<int32_t>(ubOperands.size()),
+                                    static_cast<int32_t>(iterArgs.size())}));
   // Create a region and a block for the body.  The argument of the region is
   // the loop induction variable.
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
   // Value inductionVar =
-      bodyBlock.addArgument(builder.getIndexType(), result.location);
+  bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());
 
@@ -244,13 +250,15 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
-                        int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
-                        BodyBuilderFn bodyBuilder) {
+void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
+                                 ValueRange bufs, int64_t lb, int64_t ub,
+                                 int64_t step, ValueRange iterArgs,
+                                 int64_t indirection_level,
+                                 BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
-               bodyBuilder);
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs,
+               indirection_level, bodyBuilder);
 }
 
 std::optional<OpFoldResult> PackedGenericStoreOp::getSingleStep() {
@@ -265,7 +273,9 @@ std::optional<OpFoldResult> PackedGenericStoreOp::getSingleUpperBound() {
   return OpFoldResult(b.getI64IntegerAttr(getConstantUpperBound()));
 }
 
-SmallVector<Region *> PackedGenericStoreOp::getLoopRegions() { return {&getBody()}; }
+SmallVector<Region *> PackedGenericStoreOp::getLoopRegions() {
+  return {&getBody()};
+}
 
 std::optional<Value> PackedGenericStoreOp::getSingleInductionVar() {
   return getInductionVar();
@@ -278,7 +288,8 @@ std::optional<OpFoldResult> PackedGenericStoreOp::getSingleLowerBound() {
   return OpFoldResult(b.getI64IntegerAttr(getConstantLowerBound()));
 }
 
-FailureOr<LoopLikeOpInterface> PackedGenericStoreOp::replaceWithAdditionalYields(
+FailureOr<LoopLikeOpInterface>
+PackedGenericStoreOp::replaceWithAdditionalYields(
     RewriterBase &rewriter, ValueRange newInitOperands,
     bool replaceInitOperandUsesInLoop,
     const NewYieldValuesFn &newYieldValuesFn) {
@@ -290,13 +301,14 @@ FailureOr<LoopLikeOpInterface> PackedGenericStoreOp::replaceWithAdditionalYields
 //===----------------------------------------------------------------------===//
 // PackedGenericRmwOp
 //===----------------------------------------------------------------------===//
-// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If iterArgs and
-// / bodyBuilder are empty/null, we include default terminator op.
+// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If
+// iterArgs and / bodyBuilder are empty/null, we include default terminator op.
 void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
-                        ValueRange bufs,
-                        ValueRange lbOperands, AffineMap lbMap,
-                        ValueRange ubOperands, AffineMap ubMap, int64_t step,
-                        ValueRange iterArgs, int64_t indirection_level, BodyBuilderFn bodyBuilder) {
+                               ValueRange bufs, ValueRange lbOperands,
+                               AffineMap lbMap, ValueRange ubOperands,
+                               AffineMap ubMap, int64_t step,
+                               ValueRange iterArgs, int64_t indirection_level,
+                               BodyBuilderFn bodyBuilder) {
   assert(((!lbMap && lbOperands.empty()) ||
           lbOperands.size() == lbMap.getNumInputs()) &&
          "lower bound operand count does not match the affine map");
@@ -309,7 +321,7 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
     result.addTypes(val.getType());
 
   auto indirection_level_attr = IntegerAttr::get(
-    IntegerType::get(builder.getContext(), 64), indirection_level);
+      IntegerType::get(builder.getContext(), 64), indirection_level);
   result.addAttribute(getIndirectionLevelAttrStrName(), indirection_level_attr);
 
   // Add an attribute for the step.
@@ -328,19 +340,19 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
 
   result.addOperands(iterArgs);
 
-  result.addAttribute("operandSegmentSizes",
-                      builder.getDenseI32ArrayAttr(
-                          {static_cast<int32_t>(bufs.size()),
-                           static_cast<int32_t>(lbOperands.size()),
-                           static_cast<int32_t>(ubOperands.size()),
-                           static_cast<int32_t>(iterArgs.size())}));
+  result.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(bufs.size()),
+                                    static_cast<int32_t>(lbOperands.size()),
+                                    static_cast<int32_t>(ubOperands.size()),
+                                    static_cast<int32_t>(iterArgs.size())}));
   // Create a region and a block for the body.  The argument of the region is
   // the loop induction variable.
   Region *bodyRegion = result.addRegion();
   bodyRegion->push_back(new Block);
   Block &bodyBlock = bodyRegion->front();
   // Value inductionVar =
-      bodyBlock.addArgument(builder.getIndexType(), result.location);
+  bodyBlock.addArgument(builder.getIndexType(), result.location);
   for (Value val : iterArgs)
     bodyBlock.addArgument(val.getType(), val.getLoc());
 
@@ -357,13 +369,15 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
   // }
 }
 
-void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result, ValueRange bufs, int64_t lb,
-                        int64_t ub, int64_t step, ValueRange iterArgs, int64_t indirection_level,
-                        BodyBuilderFn bodyBuilder) {
+void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
+                               ValueRange bufs, int64_t lb, int64_t ub,
+                               int64_t step, ValueRange iterArgs,
+                               int64_t indirection_level,
+                               BodyBuilderFn bodyBuilder) {
   auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
   auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
-  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs, indirection_level,
-               bodyBuilder);
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs,
+               indirection_level, bodyBuilder);
 }
 
 std::optional<OpFoldResult> PackedGenericRmwOp::getSingleStep() {
@@ -378,7 +392,9 @@ std::optional<OpFoldResult> PackedGenericRmwOp::getSingleUpperBound() {
   return OpFoldResult(b.getI64IntegerAttr(getConstantUpperBound()));
 }
 
-SmallVector<Region *> PackedGenericRmwOp::getLoopRegions() { return {&getBody()}; }
+SmallVector<Region *> PackedGenericRmwOp::getLoopRegions() {
+  return {&getBody()};
+}
 
 std::optional<Value> PackedGenericRmwOp::getSingleInductionVar() {
   return getInductionVar();
@@ -400,9 +416,8 @@ FailureOr<LoopLikeOpInterface> PackedGenericRmwOp::replaceWithAdditionalYields(
   return failure();
 }
 
-
 //===----------------------------------------------------------------------===//
-// AllocOp 
+// AllocOp
 //===----------------------------------------------------------------------===//
 
 void AllocSPDOp::getAsmResultNames(

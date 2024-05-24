@@ -36,7 +36,8 @@ If you choose `DEBUG`, it will generate MAA's execution log, which can be used t
 If you choose `CLEAN`, it will remove the generated intermediate files and the generated binary files. If you choose `UNCLEAN`, it will keep the generated intermediate files and the generated binary files.
 
 ## Future work checklist
-- [x] Implement the scatter kernels
+- [x] Support scatter kernels
+- [x] Support RMW kernels
 - [] Our indirect memory access pass should support arbitrary loop transformation
 - [] Support nested loop
 - [] Support conditions inside of loop
