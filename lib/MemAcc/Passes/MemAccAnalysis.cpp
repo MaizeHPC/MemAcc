@@ -5,6 +5,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
@@ -20,6 +21,31 @@ namespace mlir {
 
     static inline bool isStoreOp(Operation *op) {
         return isa<memref::StoreOp>(op) || isa<affine::AffineStoreOp>(op) || isa<MemAcc::StoreOp>(op);
+    }
+
+    static inline std::optional<arith::AtomicRMWKind> getRMWKind(Operation *op){
+        std::optional<arith::AtomicRMWKind> maybeKind =
+                TypeSwitch<Operation *, std::optional<arith::AtomicRMWKind>>(op)
+                    .Case([](arith::AddFOp) { return arith::AtomicRMWKind::addf; })
+                    .Case([](arith::MulFOp) { return arith::AtomicRMWKind::mulf; })
+                    .Case([](arith::AddIOp) { return arith::AtomicRMWKind::addi; })
+                    .Case([](arith::AndIOp) { return arith::AtomicRMWKind::andi; })
+                    .Case([](arith::OrIOp) { return arith::AtomicRMWKind::ori; })
+                    .Case([](arith::MulIOp) { return arith::AtomicRMWKind::muli; })
+                    .Case(
+                        [](arith::MinimumFOp) { return arith::AtomicRMWKind::minimumf; })
+                    .Case(
+                        [](arith::MaximumFOp) { return arith::AtomicRMWKind::maximumf; })
+                    .Case([](arith::MinSIOp) { return arith::AtomicRMWKind::mins; })
+                    .Case([](arith::MaxSIOp) { return arith::AtomicRMWKind::maxs; })
+                    .Case([](arith::MinUIOp) { return arith::AtomicRMWKind::minu; })
+                    .Case([](arith::MaxUIOp) { return arith::AtomicRMWKind::maxu; })
+                    .Default([](Operation *) -> std::optional<arith::AtomicRMWKind> {
+                        // TODO: AtomicRMW supports other kinds of reductions this is
+                        // currently not detecting, add those when the need arises.
+                        return std::nullopt;
+                    });
+        return maybeKind;
     }
 
     // Gather trace must end with a load op
@@ -82,8 +108,10 @@ namespace mlir {
             PRINT("  " << *op);
         }
         PRINT("RMW ops:");
-        for (auto& rmwOp: rmwOps){
-            // PRINT("  RMW op:");
+        for (auto& rmwOpPair: storeToRmwOp){
+            auto& rmwOp = rmwOpPair.second;
+            PRINT("  Store op: " << *rmwOpPair.first);
+            PRINT("  RMW kind:" << rmwOp.opKind);
             // PRINT("    opKind: " << rmwOp.opKind);
             PRINT("    addressOffset: " << rmwOp.addressOffset);
             PRINT("    baseAddress: " << rmwOp.baseAddress);
@@ -91,7 +119,24 @@ namespace mlir {
         }
     }
 
+    void DFS::RMWPath::merge(const RMWPath& other){
+        // update indirectChain/set
+        for (auto op : other.indirectChain){
+            if (indirectUseSet.count(op) == 0){
+                indirectChain.push_back(op);
+                indirectUseSet.insert(op);
+            }
+        }
+
+        // update RMW ops
+        for (auto& storeToRmwOpPair: other.storeToRmwOp){
+            assert(storeToRmwOp.count(storeToRmwOpPair.first) == 0 && "Store op already exists in RMW path\n");
+            storeToRmwOp[storeToRmwOpPair.first] = storeToRmwOpPair.second;
+        }
+    }
+
     void DFS::genRMWPath(){
+        llvm::SmallVector<Operation*> scatterPathsToRemove;
         // for each scatter path, try to generate RMW path
         for (auto& scatterPathPair: scatterPaths_){
             auto& scatterPath = scatterPathPair.second;
@@ -102,9 +147,12 @@ namespace mlir {
                 PRINT("Store value is not an arith op\n");
                 continue;
             }
-            auto arithOp = dyn_cast<arith::AddIOp>(storeVal.getDefiningOp());
-            if (!arithOp || arithOp.getNumOperands() != 2){
-                PRINT("Store value is not an add op\n" << *storeVal.getDefiningOp());
+            
+            auto arithOp = storeVal.getDefiningOp();
+            std::optional<arith::AtomicRMWKind> maybeKind = getRMWKind(arithOp);
+
+            if (!maybeKind || arithOp->getNumOperands() != 2){
+                PRINT("Store value is not an add op\n" << *arithOp);
                 continue;
             }
             // auto arithOpKind = arithOp.getKind();
@@ -112,7 +160,7 @@ namespace mlir {
             int loadOpIdx = 0;
             int nonLoadOpIdx = 1;
             for (int i = 0; i < 2; i++){
-                if (isLoadOp(arithOp.getOperand(i).getDefiningOp())){
+                if (isLoadOp(arithOp->getOperand(i).getDefiningOp())){
                     loadOpIdx = i;
                     nonLoadOpIdx = (i + 1) % 2;
                     break;
@@ -121,7 +169,7 @@ namespace mlir {
             // check if the load op has the same value as the address offset of the store op
             // use the address dependency map to find the address offset of the store op
             auto storeAddressOffset = addressDependencyMap_[storeOp];
-            auto loadOp = arithOp.getOperand(loadOpIdx).getDefiningOp();
+            auto loadOp = arithOp->getOperand(loadOpIdx).getDefiningOp();
             auto loadAddressOffset = addressDependencyMap_[loadOp];
             if (loadAddressOffset != storeAddressOffset ||  loadOp->getOperand(0) != storeOp->getOperand(1)){
                 PRINT("storeAddressOffset: " << *storeAddressOffset);
@@ -134,15 +182,22 @@ namespace mlir {
 
             // generate RMW path
             RMWOp rmwOp{
-                // arithOpKind,
+                *maybeKind,
                 loadAddressOffset->getResult(0),
                 storeOp->getOperand(1),
-                arithOp.getOperand(nonLoadOpIdx)
+                arithOp->getOperand(nonLoadOpIdx)
             };
-            resultRMWPath_.indirectChain = scatterPath.indirectChain;
-            resultRMWPath_.indirectUseSet = scatterPath.indirectUseSet;
-            resultRMWPath_.rmwOps.push_back(rmwOp);
+            resultRMWPath_.merge(RMWPath{
+                scatterPath.indirectChain,
+                scatterPath.indirectUseSet,
+                llvm::DenseMap<Operation *, RMWOp>{{storeOp, rmwOp}}
+            });
             resultRMWPath_.print();
+            scatterPathsToRemove.push_back(storeOp);
+        }
+
+        for (int i = scatterPathsToRemove.size() - 1; i >= 0; i--){
+            scatterPaths_.erase(scatterPathsToRemove[i]);
         }
     }
 

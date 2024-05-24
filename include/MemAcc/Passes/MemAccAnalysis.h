@@ -60,7 +60,7 @@ namespace mlir {
         // * addressOffset is idx[i]
         // * baseAddress is a
         // * modifiedValue is b[i]
-        // llvm::RMWOperations opKind;
+        arith::AtomicRMWKind opKind;
         Value addressOffset;
         Value baseAddress;
         Value modifiedValue;
@@ -68,8 +68,9 @@ namespace mlir {
     struct RMWPath{
         llvm::SmallVector<Operation *, 16> indirectChain;
         llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
-        llvm::SmallVector<RMWOp, 16> rmwOps;
+         llvm::DenseMap<Operation *, RMWOp> storeToRmwOp;
         void print();
+        void merge(const RMWPath& other);
     };
 
     private:
@@ -104,16 +105,16 @@ namespace mlir {
             currIndMap_.erase(&op);
         }
 
-        // Step2: merge all scatter path
+        // Step2: generate RMW paths
+        // TODO: make it optional 
+        genRMWPath();
+
+        // Step3: merge all scatter path
         auto scatterPathsIter = scatterPaths_.begin();
         while (scatterPathsIter != scatterPaths_.end()){
             resultScatterPath_.merge(scatterPathsIter->second);
             scatterPathsIter++;
         }
-
-        // Step3: generate RMW paths
-        // TODO: make it optional 
-        genRMWPath();
 
         // Step4: filter out gather paths that are only used for address of scatter paths
         filterGatherPath();
@@ -128,17 +129,22 @@ namespace mlir {
         analysisDone = true;
     }
 
-    GatherPath getGatherPath(){
+    GatherPath getGatherPath() const{
         assert(analysisDone && "Analysis not done yet\n");
         return resultGatherPath_;
     }
 
-    ScatterPath getScatterPath(){
+    ScatterPath getScatterPath() const{
         assert(analysisDone && "Analysis not done yet\n");
         return resultScatterPath_;
     }
 
-    llvm::DenseMap<Operation *, Operation*> getAddressDependencyMap(){
+    RMWPath getRMWPath() const{
+        assert(analysisDone && "Analysis not done yet\n");
+        return resultRMWPath_;
+    }
+
+    llvm::DenseMap<Operation *, Operation*> getAddressDependencyMap() const{
         assert(analysisDone && "Analysis not done yet\n");
         return addressDependencyMap_;
     }

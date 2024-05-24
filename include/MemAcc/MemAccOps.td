@@ -290,100 +290,6 @@ def MemAcc_PackedGenericRmwOp : MemAcc_PackedBaseOp<"packed_generic_rmw"> {
 }
 
 //===----------------------------------------------------------------------===//
-// generic op inside of loops
-//===----------------------------------------------------------------------===//
-
-def MemAcc_GenericStoreOp : MemAcc_Op<"generic_store"> {
-  let summary = "Defines a generic memory access pattern.";
-  let description = [{
-    The `MemAcc.generic_store` operation is designed to encapsulate any
-    arbitrary memory access pattern, including stride, indirect, and other
-    patterns. It takes a region of code as input, which should conclude with
-    a memref store operation to signify the end of the memory access
-    pattern.
-
-    Example:
-
-    ```mlir
-    affine.for %i = 0 to %0 {
-        %1 = affine.load %idx[%i] : memref<?xi32>
-        %2 = arith.index_cast %1 : i32 to index
-        %3 = memref.load %b[%i] : memref<?xf64>
-        affine.store %3, %a[%2] : memref<?xf64>
-      }
-    ```
-
-    ```mlir
-    affine.for %i = 0 to %0 {
-        %0 = memref.load %b[%i] : memref<?xf64>
-        memacc.generic_store {
-          %1 = memacc.load %idx[%i] :  memref<?xi32>
-          %2 = memacc.index_cast %1 : i32 to index
-          memacc.store %0, %a[%2] :  memref<?xi32>
-        }
-      }
-    ```
-  }];
-
-  let regions = (region AnyRegion:$body);
-  let arguments = (ins);
-  let results = (outs);
-
-  let assemblyFormat = [{
-    `region` $body attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def MemAcc_GenericLoadOp : MemAcc_Op<"generic_load"> {
-  let summary = "Defines a generic gather memory access pattern(identified inside loop).";
-  let description = [{
-    The `MemAcc.generic_load` operation encapsulates any arbitrary memory 
-    access pattern, including stride, indirect, and other patterns. It takes 
-    a region of code as input, which should conclude with a memref load 
-    operation to signify the end of the memory access pattern. The type of 
-    the last load operation in the region determines the result type of the 
-    `MemAcc.generic_load` operation. Additionally, it supports an attribute 
-    `indirection-level` to specify the level of indirection used in the 
-    memory access pattern.
-
-    Example:
-
-    ```mlir
-      affine.for %i = 0 to %0 {
-      %1 = affine.load %idx[%i] : memref<?xi32>
-      %2 = arith.index_cast %1 : i32 to index
-      %3 = memref.load %b[%1] : memref<?xf64>
-      affine.store %3, %a[%i] : memref<?xf64>
-    }
-    ```
-
-    ```mlir
-    affine.for %i = 0 to %0 {
-      %4 = memacc.generic_load indirection_level = 1 {
-        %1 = memacc.load %idx[%i] :  memref<?xi32>
-        %2 = memacc.index_cast %1 : i32 to index
-        %3 = memacc.load %b[%2] :  memref<?xf64>
-        memacc.yield %3 : f64
-      }
-      affine.store %4, %a[%i] :  memref<?xf64>
-    }
-    ```
-  }];
-
-  let regions = (region AnyRegion:$body);
-  let arguments = (ins OptionalAttr<I64Attr>:$indirectionLevel);
-  let results = (outs Variadic<AnyType>:$result);
-
-  let assemblyFormat = [{
-    `region` $body `indirection_level` `=` $indirectionLevel attr-dict `:` functional-type(operands, results)
-  }];
-
-    // Correct way to add an optional integer attribute
-
-  // let attributes = (ins Optional<I64Attr>:$indirectionLevel);
-}
-
-//===----------------------------------------------------------------------===//
 // LoadOp
 //===----------------------------------------------------------------------===//
 
@@ -473,6 +379,53 @@ def MemAcc_StoreOp : MemAcc_Op<"store",
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// AtomicRMWOp
+//===----------------------------------------------------------------------===//
+
+def MemAcc_RMWOp : MemAcc_Op<"rmw", [
+      AllTypesMatch<["value", "result"]>,
+      TypesMatchWith<"value type matches element type of memref",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">
+    ]> {
+  let summary = "atomic read-modify-write operation";
+  let description = [{
+    The `MemAcc.rmw` operation provides a way to perform a read-modify-write
+    sequence that is free from data races. The kind enumeration specifies the
+    modification to perform. The value operand represents the new value to be
+    applied during the modification. The memref operand represents the buffer
+    that the read and write will be performed against, as accessed by the
+    specified indices. The arity of the indices is the rank of the memref. The
+    result represents the latest value that was stored.
+
+    Example:
+
+    ```mlir
+    %x = memacc.rmw "addf" %value, %I[%i] : (f32, memref<10xf32>) -> f32
+    ```
+  }];
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AnyTypeOf<[AnySignlessInteger, AnyFloat]>:$value,
+      Arg<MemRefOf<[AnySignlessInteger, AnyFloat]>, "the reference to read from and write to", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices);
+  let results = (outs AnyTypeOf<[AnySignlessInteger, AnyFloat]>:$result);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `[` $indices `]` attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+
+  let extraClassDeclaration = [{
+    MemRefType getMemRefType() {
+      return ::llvm::cast<MemRefType>(getMemref().getType());
+    }
+  }];
+  // let hasFolder = 1;
+  // let hasVerifier = 1;
+}
 
 
 //===----------------------------------------------------------------------===//

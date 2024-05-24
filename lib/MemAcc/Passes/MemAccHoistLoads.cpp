@@ -28,6 +28,7 @@ namespace {
 
 llvm::DenseMap<Operation *, DFS::GatherPath> forOpToGatherPath;
 llvm::DenseMap<Operation *, DFS::ScatterPath> forOpToScatterPath;
+llvm::DenseMap<Operation *, DFS::RMWPath> forOpToRMWPath;
 llvm::DenseMap<Operation *, bool> forOpDone;
 
 static void getForToIndirectAccess(Operation *op) {
@@ -39,6 +40,7 @@ static void getForToIndirectAccess(Operation *op) {
       dfs.analyzeLoadOps<affine::AffineForOp>(dyn_cast<affine::AffineForOp>(currentOp));
       forOpToGatherPath[currentOp] = dfs.getGatherPath();
       forOpToScatterPath[currentOp] = dfs.getScatterPath();
+      forOpToRMWPath[currentOp] = dfs.getRMWPath();
       forOpDone[currentOp] = false;
     }
   });
@@ -48,11 +50,12 @@ static void getForToIndirectAccess(Operation *op) {
     PRINT("ForOp:");
     PRINT(*forOpGatherPath.first);
 
-    PRINT("GatherPath:");
     assert(forOpToGatherPath.count(forOpGatherPath.first) == 1);
     assert(forOpToScatterPath.count(forOpGatherPath.first) == 1);
     forOpGatherPath.second.print();
     forOpToScatterPath[forOpGatherPath.first].print();
+    assert(forOpToRMWPath.count(forOpGatherPath.first) == 1);
+    forOpToRMWPath[forOpGatherPath.first].print();
   }
 }
 
@@ -309,6 +312,7 @@ public:
     }
     bool hasGatherPath = (forOpToGatherPath[forOp].indirectChain.size() != 0);
     bool hasScatterPath = (forOpToScatterPath[forOp].indirectChain.size() != 0);
+    bool hasRMWPath = (forOpToRMWPath[forOp].indirectChain.size() != 0);
     auto InductionVar = forOp.getInductionVar();
     if (!hasGatherPath && !hasScatterPath) {
       forOpDone[forOp] = true;
