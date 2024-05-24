@@ -43,7 +43,8 @@ static void getForToIndirectAccess(Operation *op) {
   op->walk([&](Operation *currentOp) {
     if (isa<affine::AffineForOp>(currentOp)) {
       DFS dfs;
-      dfs.analyzeLoadOps<affine::AffineForOp>(dyn_cast<affine::AffineForOp>(currentOp));
+      dfs.analyzeLoadOps<affine::AffineForOp>(
+          dyn_cast<affine::AffineForOp>(currentOp));
       forOpToGatherPath[currentOp] = dfs.getGatherPath();
       forOpToScatterPath[currentOp] = dfs.getScatterPath();
       forOpToRMWPath[currentOp] = dfs.getRMWPath();
@@ -152,12 +153,12 @@ public:
   }
 
   void generatePackedMemAccRmwOp(
-    Location loc, PatternRewriter &rewriter,
-      llvm::DenseMap<Operation *, mlir::Value> &rmwToAllocs,
-      AffineForOp forOp, DFS::RMWPath &rmwPath,
-      unsigned int indirectLevel) const {
+      Location loc, PatternRewriter &rewriter,
+      llvm::DenseMap<Operation *, mlir::Value> &rmwToAllocs, AffineForOp forOp,
+      DFS::RMWPath &rmwPath, unsigned int indirectLevel) const {
 
-    const llvm::SmallVector<Operation *, 16>& indirectChain = rmwPath.indirectChain;
+    const llvm::SmallVector<Operation *, 16> &indirectChain =
+        rmwPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
     for (auto storeToAlloc : rmwToAllocs) {
       alloc_spds.push_back(storeToAlloc.second);
@@ -192,8 +193,9 @@ public:
                                                       newInductionVar);
         // 2. create rmw op
         auto rmwOp = rmwPath.storeToRmwOp[I];
-        rewriter.create<MemAcc::RMWOp>(loc, rmwOp.opKind, loadOp.getResult(),
-                                       rmwOp.baseAddress, opToResultMap[rmwOp.addressOffset.getDefiningOp()]);
+        rewriter.create<MemAcc::RMWOp>(
+            loc, rmwOp.opKind, loadOp.getResult(), rmwOp.baseAddress,
+            opToResultMap[rmwOp.addressOffset.getDefiningOp()]);
         continue;
       } else {
         newI = rewriter.clone(*I);
@@ -221,8 +223,8 @@ public:
     // create empty yield op as a terminator
     rewriter.create<MemAcc::YieldOp>(loc, SmallVector<Type>{},
                                      SmallVector<Value>{});
-    PRINT("PackedRMWOp:");
-    PRINT(packedRMWOp);
+    // PRINT("PackedRMWOp:");
+    // PRINT(packedRMWOp);
   }
 
   void generatePackedMemAccStoreOp(
@@ -230,7 +232,7 @@ public:
       llvm::DenseMap<Operation *, mlir::Value> &storeToAllocs,
       AffineForOp forOp, const DFS::ScatterPath &scatterPath,
       unsigned int indirectLevel) const {
-    const llvm::SmallVector<Operation *, 16>& indirectChain =
+    const llvm::SmallVector<Operation *, 16> &indirectChain =
         scatterPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
     for (auto storeToAlloc : storeToAllocs) {
@@ -403,9 +405,10 @@ public:
     llvm::DenseMap<Operation *, Value> spdBufferGather;
     llvm::DenseMap<Operation *, Value> spdBufferScatter;
     llvm::DenseMap<Operation *, Value> spdBufferRMW;
-        if (hasGatherPath) {
+    if (hasGatherPath) {
       // create spd buffer for external users of gather path
-      for (auto &opToUserPair : forOpToGatherPath[forOp].deepestLoadToExternUsers) {
+      for (auto &opToUserPair :
+           forOpToGatherPath[forOp].deepestLoadToExternUsers) {
         rewriter.setInsertionPoint(forOp);
         for (unsigned int i = 0; i < opToUserPair.second.users.size(); i++) {
           auto user = opToUserPair.second.users[i];
@@ -435,12 +438,13 @@ public:
                                  forOp, forOpToGatherPath[forOp],
                                  forOpToGatherPath[forOp].indirectDepth);
     }
-    if (hasRMWPath){
+    if (hasRMWPath) {
       rewriter.setInsertionPoint(forOp);
       /// Step1: create spd buffer for store values of rmw
       for (auto &opToRmwOpPair : forOpToRMWPath[forOp].storeToRmwOp) {
-        Value spdBuffer = getSpdBuffer(opToRmwOpPair.second.modifiedValue.getType(), rewriter,
-                                       loopLength, forOp->getLoc());
+        Value spdBuffer =
+            getSpdBuffer(opToRmwOpPair.second.modifiedValue.getType(), rewriter,
+                         loopLength, forOp->getLoc());
         // replace the original StoreOp to store to spd buffer
         // assume last instruction is a StoreOp
         spdBufferRMW[opToRmwOpPair.first] = spdBuffer;
@@ -448,18 +452,20 @@ public:
 
       /// Step2: Generate packed store op and sink outside after the loop
       rewriter.setInsertionPointAfter(forOp);
-      generatePackedMemAccRmwOp(forOp.getLoc(), rewriter, spdBufferRMW,
-                                  forOp, forOpToRMWPath[forOp],
-                                  1);
-      /// Step3: Change all store operation to store the modified value to spd buffer
+      generatePackedMemAccRmwOp(forOp.getLoc(), rewriter, spdBufferRMW, forOp,
+                                forOpToRMWPath[forOp], 1);
+      /// Step3: Change all store operation to store the modified value to spd
+      /// buffer
       for (auto &opToRmwOpPair : forOpToRMWPath[forOp].storeToRmwOp) {
         // change value to modifiedValue
-        // if modifiedValue is a load op and can map to spd buffer, replace it with load from spd buffer
-        auto modifiedValueOp = opToRmwOpPair.second.modifiedValue.getDefiningOp();
+        // if modifiedValue is a load op and can map to spd buffer, replace it
+        // with load from spd buffer
+        auto modifiedValueOp =
+            opToRmwOpPair.second.modifiedValue.getDefiningOp();
         rewriter.setInsertionPoint(opToRmwOpPair.first);
         if (spdBufferGather.count(modifiedValueOp)) {
-          auto loadOp = rewriter.create<memref::LoadOp>(forOp.getLoc(), spdBufferGather[modifiedValueOp],
-                                                      InductionVar);
+          auto loadOp = rewriter.create<memref::LoadOp>(
+              forOp.getLoc(), spdBufferGather[modifiedValueOp], InductionVar);
           opToRmwOpPair.second.modifiedValue = loadOp.getResult();
         }
         opToRmwOpPair.first->setOperand(0, opToRmwOpPair.second.modifiedValue);

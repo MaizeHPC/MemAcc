@@ -2,23 +2,23 @@
 #define MEMACC_DIALECT_MEMACC_PASSES_H
 
 #include "MemAcc/Dialect.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <memory>
 
 namespace mlir {
 class PatternRewriter;
 class RewritePatternSet;
 class DominanceInfo;
-namespace MemAcc{
+namespace MemAcc {
 std::unique_ptr<Pass> createMemAccHoistLoadsPass();
 
-// TODO: a test pass lowering memacc to llvm; it should first lower to target-aware IR then to LLVM
-// should fix later
+// TODO: a test pass lowering memacc to llvm; it should first lower to
+// target-aware IR then to LLVM should fix later
 std::unique_ptr<Pass> createTestMemAccToLLVMPass();
-}
-}
+} // namespace MemAcc
+} // namespace mlir
 
 namespace mlir {
 // Forward declaration from Dialect.h
