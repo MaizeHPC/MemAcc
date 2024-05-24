@@ -7,6 +7,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Bitcode/LLVMBitCodes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include <iostream>
@@ -53,8 +54,22 @@ namespace mlir {
     // Target: a store Op with value that is a binary arith.* op
     //         one of the operands is a load op
     //         the load op has the same value as the address offset of the store op
+    struct RMWOp{
+        // For example a[idx[i]] += b[i]
+        // * opKind is add
+        // * addressOffset is idx[i]
+        // * baseAddress is a
+        // * modifiedValue is b[i]
+        // llvm::RMWOperations opKind;
+        Value addressOffset;
+        Value baseAddress;
+        Value modifiedValue;
+    };
     struct RMWPath{
-        // TODO: Implement this!
+        llvm::SmallVector<Operation *, 16> indirectChain;
+        llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
+        llvm::SmallVector<RMWOp, 16> rmwOps;
+        void print();
     };
 
     private:
@@ -68,9 +83,11 @@ namespace mlir {
     llvm::SmallPtrSet<Operation *, 16> currIndMap_;
     GatherPath resultGatherPath_;
     ScatterPath resultScatterPath_;
+    RMWPath resultRMWPath_;
     bool analysisDone = false;
     void solve(Value curr_val, Operation *op, unsigned int depth = 0, Operation* addressDependencyOp = nullptr);
     void filterGatherPath();
+    void genRMWPath();
     public:
     void print_results();
     template <typename ForOpType>
@@ -94,10 +111,14 @@ namespace mlir {
             scatterPathsIter++;
         }
 
-        // Step3: filter out gather paths that are only used for address of scatter paths
+        // Step3: generate RMW paths
+        // TODO: make it optional 
+        genRMWPath();
+
+        // Step4: filter out gather paths that are only used for address of scatter paths
         filterGatherPath();
 
-        // Step4: merge all gather paths from the beginning
+        // Step5: merge all gather paths from the beginning
         auto gatherPathsIter = gatherPaths_.begin();
         while (gatherPathsIter != gatherPaths_.end()){
             resultGatherPath_.merge(gatherPathsIter->second);

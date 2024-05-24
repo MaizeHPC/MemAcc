@@ -69,13 +69,80 @@ namespace mlir {
                 && numUsers == 1){
                 gatherPathsToRemove.push_back(loadOp);
             }
-            // PRINT("Gather path for: " << *loadOp);
-            // gatherPath.print();
-            // PRINT("Num users: " << numUsers);
-            // PRINT("User: " << *user);
         }
         for (int i = gatherPathsToRemove.size() - 1; i >= 0; i--){
             gatherPaths_.erase(gatherPathsToRemove[i]);
+        }
+    }
+
+    void DFS::RMWPath::print(){
+        PRINT("RMW Path:");
+        PRINT("Indirect chain:");
+        for (auto op : indirectChain) {
+            PRINT("  " << *op);
+        }
+        PRINT("RMW ops:");
+        for (auto& rmwOp: rmwOps){
+            // PRINT("  RMW op:");
+            // PRINT("    opKind: " << rmwOp.opKind);
+            PRINT("    addressOffset: " << rmwOp.addressOffset);
+            PRINT("    baseAddress: " << rmwOp.baseAddress);
+            PRINT("    modifiedValue: " << rmwOp.modifiedValue);
+        }
+    }
+
+    void DFS::genRMWPath(){
+        // for each scatter path, try to generate RMW path
+        for (auto& scatterPathPair: scatterPaths_){
+            auto& scatterPath = scatterPathPair.second;
+            auto storeOp = scatterPathPair.first;
+            auto storeVal = scatterPath.storeOpVals[storeOp];
+            // check if storeVal is a binary arith op
+            if (!isa<arith::ArithDialect>(storeVal.getDefiningOp()->getDialect()) && !isa<MemAcc::MemAccDialect>(storeVal.getDefiningOp()->getDialect())){
+                PRINT("Store value is not an arith op\n");
+                continue;
+            }
+            auto arithOp = dyn_cast<arith::AddIOp>(storeVal.getDefiningOp());
+            if (!arithOp || arithOp.getNumOperands() != 2){
+                PRINT("Store value is not an add op\n" << *storeVal.getDefiningOp());
+                continue;
+            }
+            // auto arithOpKind = arithOp.getKind();
+            // check if one of the operands is a load op
+            int loadOpIdx = 0;
+            int nonLoadOpIdx = 1;
+            for (int i = 0; i < 2; i++){
+                if (isLoadOp(arithOp.getOperand(i).getDefiningOp())){
+                    loadOpIdx = i;
+                    nonLoadOpIdx = (i + 1) % 2;
+                    break;
+                }
+            }
+            // check if the load op has the same value as the address offset of the store op
+            // use the address dependency map to find the address offset of the store op
+            auto storeAddressOffset = addressDependencyMap_[storeOp];
+            auto loadOp = arithOp.getOperand(loadOpIdx).getDefiningOp();
+            auto loadAddressOffset = addressDependencyMap_[loadOp];
+            if (loadAddressOffset != storeAddressOffset ||  loadOp->getOperand(0) != storeOp->getOperand(1)){
+                PRINT("storeAddressOffset: " << *storeAddressOffset);
+                PRINT("loadAddressOffset: " << *loadAddressOffset);
+                PRINT("store base address: " << storeOp->getOperand(1));
+                PRINT("load base address: " << loadOp->getOperand(0));
+                PRINT("Load op does not have the same value as the address offset of the store op\n");
+                continue;
+            }
+
+            // generate RMW path
+            RMWOp rmwOp{
+                // arithOpKind,
+                loadAddressOffset->getResult(0),
+                storeOp->getOperand(1),
+                arithOp.getOperand(nonLoadOpIdx)
+            };
+            resultRMWPath_.indirectChain = scatterPath.indirectChain;
+            resultRMWPath_.indirectUseSet = scatterPath.indirectUseSet;
+            resultRMWPath_.rmwOps.push_back(rmwOp);
+            resultRMWPath_.print();
         }
     }
 
