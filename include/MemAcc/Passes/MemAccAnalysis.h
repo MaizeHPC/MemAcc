@@ -64,6 +64,7 @@ namespace mlir {
         Value addressOffset;
         Value baseAddress;
         Value modifiedValue;
+        Value originalLoadResult;
     };
     struct RMWPath{
         llvm::SmallVector<Operation *, 16> indirectChain;

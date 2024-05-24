@@ -23,6 +23,12 @@ namespace mlir {
         return isa<memref::StoreOp>(op) || isa<affine::AffineStoreOp>(op) || isa<MemAcc::StoreOp>(op);
     }
 
+    static inline bool isLoadAndStoreMatch(Operation* load, Operation* store){
+        assert(isLoadOp(load) && "load op expected\n");
+        assert(isStoreOp(store) && "store op expected\n");
+        return load->getOperand(0) == store->getOperand(1) && load->getOperand(1) == store->getOperand(2);
+    }
+
     static inline std::optional<arith::AtomicRMWKind> getRMWKind(Operation *op){
         std::optional<arith::AtomicRMWKind> maybeKind =
                 TypeSwitch<Operation *, std::optional<arith::AtomicRMWKind>>(op)
@@ -91,10 +97,18 @@ namespace mlir {
             int numUsers = gatherPath.deepestLoadToExternUsers[loadOp].users.size();
             assert(numUsers > 0 && "Gather path must have at least one user\n");
             auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
+            // if the user is an index cast op and has only one user, remove the gather path
             if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) 
                 && numUsers == 1){
                 gatherPathsToRemove.push_back(loadOp);
             }
+            // if the result is used as the modifiable value of a RMW op, remove the gather path
+            for (auto& rmwPathPair: resultRMWPath_.storeToRmwOp){
+                auto& rmwPath = rmwPathPair.second;
+                if (rmwPath.originalLoadResult == loadOp->getResult(0) && numUsers == 1){
+                    gatherPathsToRemove.push_back(loadOp);
+                }
+            } 
         }
         for (int i = gatherPathsToRemove.size() - 1; i >= 0; i--){
             gatherPaths_.erase(gatherPathsToRemove[i]);
@@ -157,15 +171,29 @@ namespace mlir {
             }
             // auto arithOpKind = arithOp.getKind();
             // check if one of the operands is a load op
-            int loadOpIdx = 0;
-            int nonLoadOpIdx = 1;
+            int loadOpIdx = -1;
+            int nonMatchedLoadOpIdx = 1;
             for (int i = 0; i < 2; i++){
-                if (isLoadOp(arithOp->getOperand(i).getDefiningOp())){
+                // if operand is load and base address is the same as the store op's address
+                if (isLoadOp(arithOp->getOperand(i).getDefiningOp()) && isLoadAndStoreMatch(arithOp->getOperand(i).getDefiningOp(), storeOp)){
                     loadOpIdx = i;
-                    nonLoadOpIdx = (i + 1) % 2;
+                    nonMatchedLoadOpIdx = (i + 1) % 2;
+                    PRINT("loadOpIdx: " << loadOpIdx << "Detected load " << *arithOp->getOperand(i).getDefiningOp() << " as one of the operands");
+
                     break;
                 }
             }
+
+            if (loadOpIdx == -1){
+                PRINT("Arith op does not have a load op as one of its operands\n");
+                continue;
+            }
+            
+            // auto nonMatchedLoadOp = arithOp->getOperand(nonMatchedLoadOpIdx).getDefiningOp();
+            // if (isLoadOp(nonMatchedLoadOp) && gatherPaths_.count(nonMatchedLoadOp)){
+            //     gatherPaths_[nonMatchedLoadOp].deepestLoadToExternUsers[nonMatchedLoadOp].users.push_back(storeOp);
+            //     gatherPaths_[nonMatchedLoadOp].deepestLoadToExternUsers[nonMatchedLoadOp].operandIdx.push_back(0);
+            // }
             // check if the load op has the same value as the address offset of the store op
             // use the address dependency map to find the address offset of the store op
             auto storeAddressOffset = addressDependencyMap_[storeOp];
@@ -183,9 +211,10 @@ namespace mlir {
             // generate RMW path
             RMWOp rmwOp{
                 *maybeKind,
-                loadAddressOffset->getResult(0),
-                storeOp->getOperand(1),
-                arithOp->getOperand(nonLoadOpIdx)
+                storeOp->getOperand(2), // address offset
+                storeOp->getOperand(1), // base address
+                arithOp->getOperand(nonMatchedLoadOpIdx), // modified value
+                loadOp->getResult(0) // original load op
             };
             resultRMWPath_.merge(RMWPath{
                 scatterPath.indirectChain,
