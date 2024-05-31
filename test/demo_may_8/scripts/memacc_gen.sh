@@ -1,1 +1,0 @@
-polygeist-opt test.mlir --memory-access-hoist-loads --canonicalize --mlir-disable-threading -o test_memacc.mlir --debug
