@@ -187,7 +187,7 @@ class PackedGenericRMWOpLowering
     auto [root, loopSize] = configureLoop(packedRmwOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedRmwOp] = root;
-    for (auto &I : rmwPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : rmwPath.indirectChain) {
       if (isa<MemAcc::LoadOp>(I)) {
         // Get the llvm.ptr op result for load base address
         auto dataPtr = getPtrOpResult(I->getOperand(0), rewriter);
@@ -274,7 +274,7 @@ class PackedGenericStoreOpLowering
     auto [root, loopSize] = configureLoop(packedStoreOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedStoreOp] = root;
-    for (auto &I : scatterPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : scatterPath.indirectChain) {
       // Assert that the address dependency is found and get the dependent MAA
       // inst in a robust way
       if (isa<MemAcc::LoadOp>(I)) {
@@ -371,7 +371,7 @@ class PackedGenericLoadOpLowering
     auto [root, loopSize] = configureLoop(packedLoadOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedLoadOp] = root;
-    for (auto &I : gatherPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : gatherPath.indirectChain) {
       if (isa<MemAcc::LoadOp>(I)) {
         // Get the llvm.ptr op result for load base address
         auto dataPtr = getPtrOpResult(I->getOperand(0), rewriter);

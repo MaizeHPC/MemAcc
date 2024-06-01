@@ -157,7 +157,7 @@ public:
       llvm::DenseMap<Operation *, mlir::Value> &rmwToAllocs, AffineForOp forOp,
       DFS::RMWPath &rmwPath, unsigned int indirectLevel) const {
 
-    const llvm::SmallVector<Operation *, 16> &indirectChain =
+    const DFS::IndirectChain &indirectChain =
         rmwPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
     for (auto storeToAlloc : rmwToAllocs) {
@@ -181,7 +181,7 @@ public:
     rewriter.setInsertionPointToStart(&packedRMWOp.getBody().front());
     // record the mapping of old instruction -> new instruction
     DenseMap<Operation *, Value> opToResultMap;
-    for (auto I : indirectChain) {
+    for (auto [I, condOp, condBranch] : indirectChain) {
       Operation *newI;
       // If the instruction is a store op, replace the store value with the load
       // to new induction variable
@@ -232,7 +232,7 @@ public:
       llvm::DenseMap<Operation *, mlir::Value> &storeToAllocs,
       AffineForOp forOp, const DFS::ScatterPath &scatterPath,
       unsigned int indirectLevel) const {
-    const llvm::SmallVector<Operation *, 16> &indirectChain =
+    const DFS::IndirectChain &indirectChain =
         scatterPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
     for (auto storeToAlloc : storeToAllocs) {
@@ -257,7 +257,7 @@ public:
 
     // record the mapping of old instruction -> new instruction
     DenseMap<Operation *, Value> opToResultMap;
-    for (auto I : indirectChain) {
+    for (auto [I, condOp, condBranch] : indirectChain) {
       Operation *newI;
       // If the instruction is a store op, replace the store value with the load
       // to new induction variable
@@ -303,7 +303,7 @@ public:
       llvm::DenseMap<Operation *, mlir::Value> &loadToAllocs, AffineForOp forOp,
       const DFS::GatherPath &gatherPath, unsigned int indirectLevel) const {
 
-    llvm::SmallVector<Operation *, 16> indirectChain = gatherPath.indirectChain;
+    const DFS::IndirectChain &indirectChain = gatherPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
     for (auto loadToAlloc : loadToAllocs) {
       alloc_spds.push_back(loadToAlloc.second);
@@ -327,7 +327,7 @@ public:
 
     // record the mapping of old instruction -> new instruction
     DenseMap<Operation *, Value> opToResultMap;
-    for (auto I : indirectChain) {
+    for (auto [I, condOp, condBranch] : indirectChain) {
       auto newI = rewriter.clone(*I);
       opToResultMap[I] = newI->getResult(0);
       for (unsigned idx = 0; idx < newI->getNumOperands(); ++idx) {

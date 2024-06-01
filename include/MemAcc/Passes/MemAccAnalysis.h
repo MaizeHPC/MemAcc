@@ -10,6 +10,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Bitcode/LLVMBitCodes.h"
+#include <tuple>
 #include <iostream>
 
 namespace mlir {
@@ -26,11 +27,16 @@ public:
     llvm::SmallVector<int, 16> operandIdx;
   };
 
+  /// Indirect Chain
+  // each element is a tuple of (load/storeOp, condOp, condBranch)
+  // eg. if (f[i] < 1) a[i] = ... can be represented as (a[i], f[i] < 1, true)
+  typedef llvm::SmallVector<std::tuple<Operation *, Operation *, bool>, 16> IndirectChain;
+
   // Gather path stores the indirect chain from induction variable to several
   // deepest load ops It also records how the result of the deepest load ops are
   // used by other ops for rewriting
   struct GatherPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, GatherUseInfo> deepestLoadToExternUsers;
     unsigned int indirectDepth = 0;
@@ -42,7 +48,7 @@ public:
   // Scatter path stores the indirect chain from induction variable to several
   // deepest store ops It also records the value of the store ops for rewriting
   struct ScatterPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, Value> storeOpVals;
     unsigned int indirectDepth = 0;
@@ -69,7 +75,7 @@ public:
     Value originalLoadResult;
   };
   struct RMWPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, RMWOp> storeToRmwOp;
     void print();
@@ -85,7 +91,7 @@ private:
   // on If it depends on an induction var, return the forOp that generates the
   // induction var
   llvm::DenseMap<Operation *, Operation *> addressDependencyMap_;
-  llvm::SmallVector<Operation *, 16> currIndChain_;
+  IndirectChain currIndChain_;
   llvm::SmallPtrSet<Operation *, 16> currIndMap_;
   GatherPath resultGatherPath_;
   ScatterPath resultScatterPath_;
@@ -105,7 +111,7 @@ public:
     // Step1: DFS to find all gather traces and scatter traces
     // For all instructions in forOp's body, solve
     for (auto &op : forOp.getRegion().front()) {
-      currIndChain_.push_back(&op);
+      currIndChain_.push_back(std::make_tuple(&op, nullptr, false));
       currIndMap_.insert(&op);
       solve(forOp.getInductionVar(), &op, 0, forOp);
       currIndChain_.pop_back();

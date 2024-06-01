@@ -63,7 +63,7 @@ static inline std::optional<arith::AtomicRMWKind> getRMWKind(Operation *op) {
 
 // Gather trace must end with a load op
 void DFS::GatherPath::verification() {
-  if (indirectChain.empty() || !isLoadOp(indirectChain.back())) {
+  if (indirectChain.empty() || !isLoadOp(std::get<0>(indirectChain.back()))) {
     assert(false && "Gather trace must end with a load op\n");
   }
 }
@@ -71,7 +71,9 @@ void DFS::GatherPath::verification() {
 void DFS::GatherPath::print() {
   PRINT("Gather Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    (void)condOp;
+    (void)condBranch;
     PRINT("  " << *op);
   }
   PRINT("External users:");
@@ -87,7 +89,9 @@ void DFS::GatherPath::print() {
 void DFS::ScatterPath::print() {
   PRINT("Scatter Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    (void)condOp;
+    (void)condBranch;
     PRINT("  " << *op);
   }
   PRINT("Store op value:");
@@ -129,7 +133,9 @@ void DFS::filterGatherPath() {
 void DFS::RMWPath::print() {
   PRINT("RMW Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    (void)condOp;
+    (void)condBranch;
     PRINT("  " << *op);
   }
   PRINT("RMW ops:");
@@ -147,9 +153,9 @@ void DFS::RMWPath::print() {
 void DFS::RMWPath::merge(const RMWPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
 
@@ -251,9 +257,9 @@ void DFS::genRMWPath() {
 void DFS::GatherPath::merge(const GatherPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
 
@@ -295,9 +301,9 @@ void DFS::GatherPath::merge(const GatherPath &other) {
 void DFS::ScatterPath::merge(const ScatterPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
   for (auto &opToValPair : other.storeOpVals) {
@@ -313,8 +319,8 @@ void DFS::ScatterPath::merge(const ScatterPath &other) {
 /// Scatter trace must end with a store op
 void DFS::ScatterPath::verification() {
   if (indirectChain.empty() ||
-      (!isa<memref::StoreOp>(indirectChain.back()) &&
-       !isa<affine::AffineStoreOp>(indirectChain.back()))) {
+      (!isa<memref::StoreOp>(std::get<0>(indirectChain.back())) &&
+       !isa<affine::AffineStoreOp>(std::get<0>(indirectChain.back())))) {
     assert(false && "Scatter trace must end with a store op\n");
   }
 }
@@ -445,7 +451,7 @@ void DFS::solve(Value curr_val, Operation *op, unsigned int depth,
 
   for (auto user : curr_val.getUsers()) {
     if (currIndMap_.count(user) == 0) { // Prevent infinite recursion
-      currIndChain_.push_back(user);
+      currIndChain_.push_back(std::make_tuple(user, nullptr, false));
       currIndMap_.insert(user);
       solve(curr_val, user, depth,
             addressDependencyOp); // Update curr_val with user->getResult(0)
