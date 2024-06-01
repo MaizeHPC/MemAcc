@@ -10,6 +10,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Bitcode/LLVMBitCodes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include <tuple>
 #include <iostream>
 
@@ -101,6 +102,21 @@ private:
              Operation *addressDependencyOp = nullptr);
   void filterGatherPath();
   void genRMWPath();
+  // For any operation, get the dependent condition operation and the branch
+  // If no dependent condition operation is found, return nullptr
+  // Eg. if (f[i] < 1) a[i] = ... can be represented as (a[i], f[i] < 1, true)
+  static std::tuple<Operation*, bool> getDependentCondition(Operation* op){
+    // If the parent of current op is not an scf::if, return nullptr
+    auto parent = op->getParentOfType<scf::IfOp>();
+    if (!parent)
+      return std::make_tuple(nullptr, false);
+
+    // Then, find the condition operation that is dependent on the current op
+    auto condOp = parent.getCondition().getDefiningOp();
+    // Then, find whether current Op is in then or else branch
+    bool condBranch = op->getBlock() == &parent.getThenRegion().front();
+    return std::make_tuple(condOp, condBranch);
+  }
 
 public:
   void print_results();
@@ -110,12 +126,17 @@ public:
 
     // Step1: DFS to find all gather traces and scatter traces
     // For all instructions in forOp's body, solve
-    for (auto &op : forOp.getRegion().front()) {
-      currIndChain_.push_back(std::make_tuple(&op, nullptr, false));
-      currIndMap_.insert(&op);
-      solve(forOp.getInductionVar(), &op, 0, forOp);
-      currIndChain_.pop_back();
-      currIndMap_.erase(&op);
+    for (auto op : forOp.getInductionVar().getUsers()) {
+      if (isAddressTransformationOp(op)){
+        auto [condOp, condBranch] = getDependentCondition(op);
+        currIndChain_.push_back(std::make_tuple(op, condOp, condBranch));
+        currIndMap_.insert(op);
+      }
+      solve(forOp.getInductionVar(), op, 0, forOp);
+      if (isAddressTransformationOp(op)){
+        currIndChain_.pop_back();
+        currIndMap_.erase(op);
+      }
     }
 
     // Step2: generate RMW paths
@@ -162,6 +183,8 @@ public:
     assert(analysisDone && "Analysis not done yet\n");
     return addressDependencyMap_;
   }
+
+  static bool isAddressTransformationOp(Operation * op);
 };
 
 } // namespace mlir

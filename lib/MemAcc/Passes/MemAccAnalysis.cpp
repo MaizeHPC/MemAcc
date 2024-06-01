@@ -72,9 +72,7 @@ void DFS::GatherPath::print() {
   PRINT("Gather Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    (void)condOp;
-    (void)condBranch;
-    PRINT("  " << *op);
+    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
   }
   PRINT("External users:");
   for (auto &opToUserPair : deepestLoadToExternUsers) {
@@ -90,9 +88,7 @@ void DFS::ScatterPath::print() {
   PRINT("Scatter Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    (void)condOp;
-    (void)condBranch;
-    PRINT("  " << *op);
+    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
   }
   PRINT("Store op value:");
   for (auto &opToValPair : storeOpVals) {
@@ -134,9 +130,7 @@ void DFS::RMWPath::print() {
   PRINT("RMW Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    (void)condOp;
-    (void)condBranch;
-    PRINT("  " << *op);
+    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
   }
   PRINT("RMW ops:");
   for (auto &rmwOpPair : storeToRmwOp) {
@@ -351,6 +345,10 @@ void DFS::print_results() {
   }
 }
 
+bool DFS::isAddressTransformationOp(Operation *op){
+  return isLoadOp(op) || isStoreOp(op) || isRMWOp(op) || isa<arith::ArithDialect>(op->getDialect()) || isa<MemAcc::MemAccDialect>(op->getDialect());
+}
+
 /// Please refer to
 //  ```
 //  Ainsworth, Sam, and Timothy M. Jones. "Software prefetching for indirect
@@ -451,7 +449,8 @@ void DFS::solve(Value curr_val, Operation *op, unsigned int depth,
 
   for (auto user : curr_val.getUsers()) {
     if (currIndMap_.count(user) == 0) { // Prevent infinite recursion
-      currIndChain_.push_back(std::make_tuple(user, nullptr, false));
+      auto [condOp, condBranch] = getDependentCondition(user);
+      currIndChain_.push_back(std::make_tuple(user, condOp, condBranch));
       currIndMap_.insert(user);
       solve(curr_val, user, depth,
             addressDependencyOp); // Update curr_val with user->getResult(0)
