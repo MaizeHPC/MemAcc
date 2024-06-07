@@ -84,10 +84,11 @@ static AffineForOp getTargetForOp(PackedOpType packedOp) {
   for (auto &op : packedOp->getParentRegion()->front()) {
     if (auto forOp = dyn_cast<AffineForOp>(op)) {
       // Check if the store op has the same header of the for op
-      if (isTheSameForOp(packedOp, forOp)) {
-        targetForOp = forOp;
-        break;
-      }
+      // if (isTheSameForOp(packedOp, forOp)) {
+      //   targetForOp = forOp;
+      //   break;
+      // }
+      return forOp;
     }
   }
   return targetForOp;

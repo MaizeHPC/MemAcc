@@ -6,8 +6,10 @@
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "MemAcc/Passes/MemAccUtils.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
+#include "MemAcc/Passes/MemAccUtils.h"
 
 #define DEBUG_TYPE "memory-access-hoist-loads"
 
@@ -142,20 +144,32 @@ class PackGenericLoadOpOutsideLoop
 public:
   using OpRewritePattern<affine::AffineForOp>::OpRewritePattern;
 
-  Value getForLoopLength(AffineForOp forOp) const {
+  Value getForLoopLowerBound(PatternRewriter &rewriter,
+                             AffineForOp forOp) const {
+    auto lb = forOp.getLowerBoundOperands();
+    auto lbMap = forOp.getLowerBoundMap();
+    auto lbResult = getAffineMapMax(rewriter, forOp.getLoc(), lbMap, lb);
+    return lbResult;
+  }
+
+  Value getForLoopUpperBound(PatternRewriter &rewriter,
+                             AffineForOp forOp) const {
+    auto ub = forOp.getUpperBoundOperands();
+    auto ubMap = forOp.getUpperBoundMap();
+    auto ubResult = getAffineMapMin(rewriter, forOp.getLoc(), ubMap, ub);
+    return ubResult;
+  }
+
+  Value getForLoopLength(PatternRewriter &rewriter,Value upperBound, Value lowerBound) const {
     // auto lb = forOp.getLowerBound();
-    auto ub = forOp.getUpperBoundOperands()[0];
-    // auto step = forOp.getStep();
-    // auto diff = rewriter.create<SubIOp>(forOp.getLoc(), ub, lb);
-    // auto div = rewriter.create<SignedDivIOp>(forOp.getLoc(), diff, step);
-    // TODO: handle the case where the loop is not a constant step
-    return ub;
+    auto length = rewriter.create<arith::SubIOp>(upperBound.getLoc(), upperBound, lowerBound);
+    return length;
   }
 
   void generatePackedMemAccRmwOp(
       Location loc, PatternRewriter &rewriter,
       llvm::DenseMap<Operation *, mlir::Value> &rmwToAllocs, AffineForOp forOp,
-      DFS::RMWPath &rmwPath, unsigned int indirectLevel) const {
+      DFS::RMWPath &rmwPath, unsigned int indirectLevel, Value loopUpperBound, Value loopLowerBound) const {
 
     const DFS::IndirectChain &indirectChain =
         rmwPath.indirectChain;
@@ -166,8 +180,8 @@ public:
     llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
     // Create PackedOpType outside of the loop
     auto packedRMWOp = rewriter.create<MemAcc::PackedGenericRmwOp>(
-        loc, alloc_spds_ref, forOp.getLowerBoundOperands(),
-        forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
+        loc, alloc_spds_ref, ValueRange({loopLowerBound}),
+        forOp.getLowerBoundMap(), ValueRange({loopUpperBound}),
         forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
         indirectLevel);
 
@@ -231,7 +245,7 @@ public:
       Location loc, PatternRewriter &rewriter,
       llvm::DenseMap<Operation *, mlir::Value> &storeToAllocs,
       AffineForOp forOp, const DFS::ScatterPath &scatterPath,
-      unsigned int indirectLevel) const {
+      unsigned int indirectLevel, Value loopUpperBound, Value loopLowerBound) const {
     const DFS::IndirectChain &indirectChain =
         scatterPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
@@ -241,8 +255,8 @@ public:
     llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
     // Create PackedOpType outside of the loop
     auto packedStoreOp = rewriter.create<MemAcc::PackedGenericStoreOp>(
-        loc, alloc_spds_ref, forOp.getLowerBoundOperands(),
-        forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
+        loc, alloc_spds_ref, ValueRange({loopLowerBound}),
+        forOp.getLowerBoundMap(), ValueRange({loopUpperBound}),
         forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
         indirectLevel);
 
@@ -301,7 +315,7 @@ public:
   void generatePackedMemAccLoadOp(
       Location loc, PatternRewriter &rewriter,
       llvm::DenseMap<Operation *, mlir::Value> &loadToAllocs, AffineForOp forOp,
-      const DFS::GatherPath &gatherPath, unsigned int indirectLevel) const {
+      const DFS::GatherPath &gatherPath, unsigned int indirectLevel, Value loopUpperBound, Value loopLowerBound) const {
 
     const DFS::IndirectChain &indirectChain = gatherPath.indirectChain;
     llvm::SmallVector<mlir::Value> alloc_spds;
@@ -311,8 +325,8 @@ public:
     llvm::ArrayRef<mlir::Value> alloc_spds_ref(alloc_spds);
     // Create PackedOpType outside of the loop
     auto packedLoadOp = rewriter.create<MemAcc::PackedGenericLoadOp>(
-        loc, alloc_spds_ref, forOp.getLowerBoundOperands(),
-        forOp.getLowerBoundMap(), forOp.getUpperBoundOperands(),
+        loc, alloc_spds_ref, ValueRange({loopLowerBound}),
+        forOp.getLowerBoundMap(), ValueRange({loopUpperBound}),
         forOp.getUpperBoundMap(), forOp.getStep(), forOp.getInits(),
         indirectLevel);
 
@@ -401,7 +415,13 @@ public:
     // the size of the alloc_spd is the same as the loop length
     // the type of the alloc_spd is the same as the result type of the generic
     // op also record the result idx that used for store idx
-    Value loopLength = getForLoopLength(forOp);
+    rewriter.setInsertionPoint(forOp);
+    Value loopUpperBound = getForLoopUpperBound(rewriter, forOp);
+    Value loopLowerBound = getForLoopLowerBound(rewriter, forOp);
+    auto loopLength = getForLoopLength(rewriter, loopUpperBound, loopLowerBound);
+
+    rewriter.setInsertionPoint(&forOp.getBody()->front());
+    auto spdIndex = rewriter.create<arith::SubIOp>(forOp.getLoc(), InductionVar, loopLowerBound).getResult();
     llvm::DenseMap<Operation *, Value> spdBufferGather;
     llvm::DenseMap<Operation *, Value> spdBufferScatter;
     llvm::DenseMap<Operation *, Value> spdBufferRMW;
@@ -425,7 +445,7 @@ public:
           auto newOperand =
               rewriter
                   .create<memref::LoadOp>(forOp.getLoc(), spdBuffer,
-                                          ValueRange({InductionVar}))
+                                          ValueRange({spdIndex}))
                   .getResult();
           user->setOperand(operandIdx, newOperand);
           spdBufferGather[opToUserPair.first] = spdBuffer;
@@ -436,7 +456,7 @@ public:
       rewriter.setInsertionPoint(forOp);
       generatePackedMemAccLoadOp(forOp.getLoc(), rewriter, spdBufferGather,
                                  forOp, forOpToGatherPath[forOp],
-                                 forOpToGatherPath[forOp].indirectDepth);
+                                 forOpToGatherPath[forOp].indirectDepth, loopUpperBound, loopLowerBound);
     }
     if (hasRMWPath) {
       rewriter.setInsertionPoint(forOp);
@@ -453,7 +473,7 @@ public:
       /// Step2: Generate packed store op and sink outside after the loop
       rewriter.setInsertionPointAfter(forOp);
       generatePackedMemAccRmwOp(forOp.getLoc(), rewriter, spdBufferRMW, forOp,
-                                forOpToRMWPath[forOp], 1);
+                                forOpToRMWPath[forOp], 1, loopUpperBound, loopLowerBound);
       /// Step3: Change all store operation to store the modified value to spd
       /// buffer
       for (auto &opToRmwOpPair : forOpToRMWPath[forOp].storeToRmwOp) {
@@ -465,14 +485,14 @@ public:
         rewriter.setInsertionPoint(opToRmwOpPair.first);
         if (spdBufferGather.count(modifiedValueOp)) {
           auto loadOp = rewriter.create<memref::LoadOp>(
-              forOp.getLoc(), spdBufferGather[modifiedValueOp], InductionVar);
+              forOp.getLoc(), spdBufferGather[modifiedValueOp], spdIndex);
           opToRmwOpPair.second.modifiedValue = loadOp.getResult();
         }
         opToRmwOpPair.first->setOperand(0, opToRmwOpPair.second.modifiedValue);
         // change base address to InductionVar
         opToRmwOpPair.first->setOperand(1, spdBufferRMW[opToRmwOpPair.first]);
         // change offset to InductionVar
-        opToRmwOpPair.first->setOperand(2, InductionVar);
+        opToRmwOpPair.first->setOperand(2, spdIndex);
       }
     }
     if (hasScatterPath) {
@@ -491,7 +511,7 @@ public:
       rewriter.setInsertionPointAfter(forOp);
       generatePackedMemAccStoreOp(forOp.getLoc(), rewriter, spdBufferScatter,
                                   forOp, forOpToScatterPath[forOp],
-                                  forOpToScatterPath[forOp].indirectDepth);
+                                  forOpToScatterPath[forOp].indirectDepth, loopUpperBound, loopLowerBound);
 
       /// Step3: Change original store operations to store to spd buffer with
       /// induction var
@@ -499,7 +519,7 @@ public:
         // change base address to InductionVar
         opToValPair.first->setOperand(1, spdBufferScatter[opToValPair.first]);
         // change offset to InductionVar
-        opToValPair.first->setOperand(2, InductionVar);
+        opToValPair.first->setOperand(2, spdIndex);
       }
     } // if
 

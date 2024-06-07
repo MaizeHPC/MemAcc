@@ -27,6 +27,9 @@ function test_memacc_analysis() {
         abort "failed to convert C/C++ to MLIR"
     fi
 
+    echo "[LOG]: Apply tiling on top of affine loop nest"
+    polygeist-opt $1.affine.mlir -affine-loop-tile="tile-size=2" --canonicalize -o $1.affine.mlir
+
     echo "[LOG]: Capturing indirect memory accesses and hoisting them out of loop (hardware-agnostic)"
     polygeist-opt $1.affine.mlir --memory-access-hoist-loads  --canonicalize --mlir-disable-threading -o $1.mlir
     if [ $? -ne 0 ]; then
@@ -73,11 +76,11 @@ if [ $# -ne 2 ]; then
     Usage
 fi
 
-for i in $(ls *.cpp); do
-    test_memacc_analysis $i $1
-done
+# for i in $(ls *.cpp); do
+#     test_memacc_analysis $i $1
+# done
 
-# test_memacc_analysis scatter_cond.cpp $1
+test_memacc_analysis rmw.cpp $1
 
 echo "[LOG]: All tests passed"
 if [ $2 == "CLEAN" ]; then

@@ -72,7 +72,11 @@ void DFS::GatherPath::print() {
   PRINT("Gather Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    }
   }
   PRINT("External users:");
   for (auto &opToUserPair : deepestLoadToExternUsers) {
@@ -88,7 +92,11 @@ void DFS::ScatterPath::print() {
   PRINT("Scatter Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    }
   }
   PRINT("Store op value:");
   for (auto &opToValPair : storeOpVals) {
@@ -130,7 +138,11 @@ void DFS::RMWPath::print() {
   PRINT("RMW Path:");
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
-    PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+    }
   }
   PRINT("RMW ops:");
   for (auto &rmwOpPair : storeToRmwOp) {

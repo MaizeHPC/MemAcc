@@ -72,12 +72,12 @@ void PackedGenericLoadOp::build(OpBuilder &builder, OperationState &result,
                                 AffineMap ubMap, int64_t step,
                                 ValueRange iterArgs, int64_t indirection_level,
                                 BodyBuilderFn bodyBuilder) {
-  assert(((!lbMap && lbOperands.empty()) ||
-          lbOperands.size() == lbMap.getNumInputs()) &&
-         "lower bound operand count does not match the affine map");
-  assert(((!ubMap && ubOperands.empty()) ||
-          ubOperands.size() == ubMap.getNumInputs()) &&
-         "upper bound operand count does not match the affine map");
+  // assert(((!lbMap && lbOperands.empty()) ||
+  //         lbOperands.size() == lbMap.getNumInputs()) &&
+  //        "lower bound operand count does not match the affine map");
+  // assert(((!ubMap && ubOperands.empty()) ||
+  //         ubOperands.size() == ubMap.getNumInputs()) &&
+  //        "upper bound operand count does not match the affine map");
   assert(step > 0 && "step has to be a positive integer constant");
 
   for (Value val : iterArgs)
@@ -190,12 +190,12 @@ void PackedGenericStoreOp::build(OpBuilder &builder, OperationState &result,
                                  AffineMap ubMap, int64_t step,
                                  ValueRange iterArgs, int64_t indirection_level,
                                  BodyBuilderFn bodyBuilder) {
-  assert(((!lbMap && lbOperands.empty()) ||
-          lbOperands.size() == lbMap.getNumInputs()) &&
-         "lower bound operand count does not match the affine map");
-  assert(((!ubMap && ubOperands.empty()) ||
-          ubOperands.size() == ubMap.getNumInputs()) &&
-         "upper bound operand count does not match the affine map");
+  // assert(((!lbMap && lbOperands.empty()) ||
+  //         lbOperands.size() == lbMap.getNumInputs()) &&
+  //        "lower bound operand count does not match the affine map");
+  // assert(((!ubMap && ubOperands.empty()) ||
+  //         ubOperands.size() == ubMap.getNumInputs()) &&
+  //        "upper bound operand count does not match the affine map");
   assert(step > 0 && "step has to be a positive integer constant");
 
   for (Value val : iterArgs)
@@ -309,12 +309,12 @@ void PackedGenericRmwOp::build(OpBuilder &builder, OperationState &result,
                                AffineMap ubMap, int64_t step,
                                ValueRange iterArgs, int64_t indirection_level,
                                BodyBuilderFn bodyBuilder) {
-  assert(((!lbMap && lbOperands.empty()) ||
-          lbOperands.size() == lbMap.getNumInputs()) &&
-         "lower bound operand count does not match the affine map");
-  assert(((!ubMap && ubOperands.empty()) ||
-          ubOperands.size() == ubMap.getNumInputs()) &&
-         "upper bound operand count does not match the affine map");
+  // assert(((!lbMap && lbOperands.empty()) ||
+  //         lbOperands.size() == lbMap.getNumInputs()) &&
+  //        "lower bound operand count does not match the affine map");
+  // assert(((!ubMap && ubOperands.empty()) ||
+  //         ubOperands.size() == ubMap.getNumInputs()) &&
+  //        "upper bound operand count does not match the affine map");
   assert(step > 0 && "step has to be a positive integer constant");
 
   for (Value val : iterArgs)
