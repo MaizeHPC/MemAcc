@@ -73,9 +73,12 @@ void DFS::GatherPath::print() {
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
     if (!condOp) {
-      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
     } else {
-      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
     }
   }
   PRINT("External users:");
@@ -93,9 +96,12 @@ void DFS::ScatterPath::print() {
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
     if (!condOp) {
-      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
     } else {
-      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
     }
   }
   PRINT("Store op value:");
@@ -114,7 +120,8 @@ void DFS::filterGatherPath() {
     int numUsers = gatherPath.deepestLoadToExternUsers[loadOp].users.size();
     assert(numUsers > 0 && "Gather path must have at least one user\n");
     // auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
-    // // if the user is an index cast op and has only one user, remove the gather
+    // // if the user is an index cast op and has only one user, remove the
+    // gather
     // // path
     // if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) &&
     //     numUsers == 1) {
@@ -125,8 +132,8 @@ void DFS::filterGatherPath() {
       auto &scatterPath = scatterPathPair.second;
       for (auto [op, condOp, condBranch] : scatterPath.indirectChain) {
         if (addressDependencyMap_[op] == loadOp) {
-      gatherPathsToRemove.push_back(loadOp);
-    }
+          gatherPathsToRemove.push_back(loadOp);
+        }
       }
     }
     // if the result is used as the modifiable value of a RMW op, remove the
@@ -148,9 +155,12 @@ void DFS::RMWPath::print() {
   PRINT("Indirect chain:");
   for (auto [op, condOp, condBranch] : indirectChain) {
     if (!condOp) {
-      PRINT("Op  " << *op << " Condition Depends on " << "None" << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
     } else {
-      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " " << condBranch);
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
     }
   }
   PRINT("RMW ops:");
@@ -192,7 +202,7 @@ void DFS::genRMWPath() {
     // check if storeVal is a binary arith op
     if (!isa<arith::ArithDialect>(storeVal.getDefiningOp()->getDialect()) &&
         !isa<MemAcc::MemAccDialect>(storeVal.getDefiningOp()->getDialect())) {
-    //   PRINT("Store value is not an arith op\n");
+      //   PRINT("Store value is not an arith op\n");
       continue;
     }
 
@@ -200,7 +210,7 @@ void DFS::genRMWPath() {
     std::optional<arith::AtomicRMWKind> maybeKind = getRMWKind(arithOp);
 
     if (!maybeKind || arithOp->getNumOperands() != 2) {
-    //   PRINT("Store value is not an add op\n" << *arithOp);
+      //   PRINT("Store value is not an add op\n" << *arithOp);
       continue;
     }
     // auto arithOpKind = arithOp.getKind();
@@ -224,7 +234,7 @@ void DFS::genRMWPath() {
     }
 
     if (loadOpIdx == -1) {
-    //   PRINT("Arith op does not have a load op as one of its operands\n");
+      //   PRINT("Arith op does not have a load op as one of its operands\n");
       continue;
     }
 
@@ -236,12 +246,13 @@ void DFS::genRMWPath() {
     auto loadAddressOffset = addressDependencyMap_[loadOp];
     if (loadAddressOffset != storeAddressOffset ||
         loadOp->getOperand(0) != storeOp->getOperand(1)) {
-    //   PRINT("storeAddressOffset: " << *storeAddressOffset);
-    //   PRINT("loadAddressOffset: " << *loadAddressOffset);
-    //   PRINT("store base address: " << storeOp->getOperand(1));
-    //   PRINT("load base address: " << loadOp->getOperand(0));
-    //   PRINT("Load op does not have the same value as the address offset of the "
-    //         "store op\n");
+      //   PRINT("storeAddressOffset: " << *storeAddressOffset);
+      //   PRINT("loadAddressOffset: " << *loadAddressOffset);
+      //   PRINT("store base address: " << storeOp->getOperand(1));
+      //   PRINT("load base address: " << loadOp->getOperand(0));
+      //   PRINT("Load op does not have the same value as the address offset of
+      //   the "
+      //         "store op\n");
       continue;
     }
 
@@ -366,8 +377,10 @@ void DFS::print_results() {
   }
 }
 
-bool DFS::isAddressTransformationOp(Operation *op){
-  return isLoadOp(op) || isStoreOp(op) || isRMWOp(op) || isa<arith::ArithDialect>(op->getDialect()) || isa<MemAcc::MemAccDialect>(op->getDialect());
+bool DFS::isAddressTransformationOp(Operation *op) {
+  return isLoadOp(op) || isStoreOp(op) || isRMWOp(op) ||
+         isa<arith::ArithDialect>(op->getDialect()) ||
+         isa<MemAcc::MemAccDialect>(op->getDialect());
 }
 
 /// Please refer to
