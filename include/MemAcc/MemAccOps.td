@@ -293,6 +293,53 @@ def MemAcc_PackedGenericRmwOp : MemAcc_PackedBaseOp<"packed_generic_rmw"> {
 // LoadOp
 //===----------------------------------------------------------------------===//
 
+def MemAcc_LoadCondOp : MemAcc_Op<"load_cond",
+     [TypesMatchWith<"result type matches element type of 'memref'",
+                     "memref", "result",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">]> {
+  let summary = "Conditional load operation";
+  let description = [{
+    The `load` op reads an element from a memref specified by an index list. The
+    output of load is a new value with the same type as the elements of the
+    memref. The arity of indices is the rank of the memref (i.e., if the memref
+    loaded from is of rank 3, then 3 indices are required for the load following
+    the memref identifier).
+
+    In an `affine.if` or `affine.for` body, the indices of a load are restricted
+    to SSA values bound to surrounding loop induction variables,
+    [symbols](Affine.md/#dimensions-and-symbols), results of a
+    constant operations, or the result of an
+    `affine.apply` operation that can in turn take as arguments all of the
+    aforementioned SSA values or the recursively result of such an
+    `affine.apply` operation.
+  }];
+
+  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
+                           [MemRead]>:$memref,
+                       Variadic<Index>:$indices,
+                       I1:$condition,
+                       BoolAttr:$conditionCase,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$nontemporal);
+  let results = (outs AnyType:$result);
+
+  let extraClassDeclaration = [{
+    Value getMemRef() { return getOperand(0); }
+    void setMemRef(Value value) { setOperand(0, value); }
+    MemRefType getMemRefType() {
+      return ::llvm::cast<MemRefType>(getMemRef().getType());
+    }
+  }];
+
+  // let hasFolder = 1;
+  // let hasVerifier = 1;
+
+  // let assemblyFormat = "$memref `[` $indices `]` attr-dict `:` type($memref)";
+}
+
+//===----------------------------------------------------------------------===//
+// LoadOp
+//===----------------------------------------------------------------------===//
+
 def MemAcc_LoadOp : MemAcc_Op<"load",
      [TypesMatchWith<"result type matches element type of 'memref'",
                      "memref", "result",
@@ -377,6 +424,49 @@ def MemAcc_StoreOp : MemAcc_Op<"store",
   let assemblyFormat = [{
     $value `,` $memref `[` $indices `]` attr-dict `:` type($memref)
   }];
+}
+
+def MemAcc_StoreCondOp : MemAcc_Op<"store_cond",
+     [TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">]> {
+  let summary = "store operation";
+  let description = [{
+    Store a value to a memref location given by indices. The value stored should
+    have the same type as the elemental type of the memref. The number of
+    arguments provided within brackets need to match the rank of the memref.
+  }];
+
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "the reference to store to",
+                           [MemWrite]>:$memref,
+                       Variadic<Index>:$indices,
+                       I1:$condition,
+                       BoolAttr:$conditionCase,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$nontemporal);
+
+  let builders = [
+    OpBuilder<(ins "Value":$valueToStore, "Value":$memref), [{
+      $_state.addOperands(valueToStore);
+      $_state.addOperands(memref);
+    }]>];
+
+  let extraClassDeclaration = [{
+      Value getValueToStore() { return getOperand(0); }
+
+      Value getMemRef() { return getOperand(1); }
+      void setMemRef(Value value) { setOperand(1, value); }
+      MemRefType getMemRefType() {
+        return ::llvm::cast<MemRefType>(getMemRef().getType());
+      }
+  }];
+
+  // let hasFolder = 1;
+  // let hasVerifier = 1;
+
+  // let assemblyFormat = [{
+  //   $value `,` $memref `[` $indices `]` attr-dict `:` type($memref)
+  // }];
 }
 
 //===----------------------------------------------------------------------===//

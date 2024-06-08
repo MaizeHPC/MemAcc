@@ -14,7 +14,6 @@ int main(){
   // verification
   for (int i = 0; i < 4; i++) {
     printf("a[%d] = %d\n", i, a[i]);
-    return 1;
   }
   return 0;
 }
