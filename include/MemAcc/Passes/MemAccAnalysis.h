@@ -150,6 +150,8 @@ public:
       scatterPathsIter++;
     }
 
+    // print_results();
+
     // Step4: filter out gather paths that are only used for address of scatter
     // paths
     filterGatherPath();

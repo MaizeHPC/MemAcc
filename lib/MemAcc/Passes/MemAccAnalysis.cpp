@@ -113,12 +113,21 @@ void DFS::filterGatherPath() {
     auto loadOp = gatherPathPair.first;
     int numUsers = gatherPath.deepestLoadToExternUsers[loadOp].users.size();
     assert(numUsers > 0 && "Gather path must have at least one user\n");
-    auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
-    // if the user is an index cast op and has only one user, remove the gather
-    // path
-    if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) &&
-        numUsers == 1) {
+    // auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
+    // // if the user is an index cast op and has only one user, remove the gather
+    // // path
+    // if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) &&
+    //     numUsers == 1) {
+    //   gatherPathsToRemove.push_back(loadOp);
+    // }
+    // For all scatter path, if the store depends on the load, remove the gather
+    for (auto &scatterPathPair : scatterPaths_) {
+      auto &scatterPath = scatterPathPair.second;
+      for (auto [op, condOp, condBranch] : scatterPath.indirectChain) {
+        if (addressDependencyMap_[op] == loadOp) {
       gatherPathsToRemove.push_back(loadOp);
+    }
+      }
     }
     // if the result is used as the modifiable value of a RMW op, remove the
     // gather path

@@ -56,15 +56,15 @@ static void getForToIndirectAccess(Operation *op) {
 
   // Print forOp -> GatherPath/SactterPath
   for (auto &forOpGatherPath : forOpToGatherPath) {
-    // PRINT("ForOp:");
-    // PRINT(*forOpGatherPath.first);
+    PRINT("ForOp:");
+    PRINT(*forOpGatherPath.first);
 
     assert(forOpToGatherPath.count(forOpGatherPath.first) == 1);
     assert(forOpToScatterPath.count(forOpGatherPath.first) == 1);
-    // forOpGatherPath.second.print();
-    // forOpToScatterPath[forOpGatherPath.first].print();
+    forOpGatherPath.second.print();
+    forOpToScatterPath[forOpGatherPath.first].print();
     assert(forOpToRMWPath.count(forOpGatherPath.first) == 1);
-    // forOpToRMWPath[forOpGatherPath.first].print();
+    forOpToRMWPath[forOpGatherPath.first].print();
   }
 }
 

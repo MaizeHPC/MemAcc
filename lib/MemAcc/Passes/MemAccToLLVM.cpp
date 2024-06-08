@@ -360,7 +360,6 @@ class PackedGenericLoadOpLowering
 
     AffineForOp targetForOp = getTargetForOp(packedLoadOp);
     assert(targetForOp && "Target for op not found");
-
     // Get dependency address information and gather path
     DFS dfs;
     dfs.analyzeLoadOps<PackedGenericLoadOp>(packedLoadOp);
@@ -379,8 +378,10 @@ class PackedGenericLoadOpLowering
 
         // Assert that the address dependency is found and get the dependent MAA
         // inst in a robust way
+        // PRINT("current I: " << *I << "\n");
         assert(addressDependencyMap.count(I) > 0 &&
                "Address dependency not found");
+        // PRINT("dependent Inst: " << *addressDependencyMap[I] << "\n");
         assert(addressDependencyOpToMAAInst.count(addressDependencyMap[I]) >
                    0 &&
                "MAA dependent Inst not found");
