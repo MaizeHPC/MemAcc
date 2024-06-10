@@ -12,12 +12,21 @@ def MemAccHoistLoads : Pass<"memory-access-hoist-loads"> {
   ];
 }
 
+
 def MemAccToLLVM : Pass<"memory-access-to-llvm"> {
   let summary = "convert memory accesses to LLVM intrinsics";
   let constructor = "mlir::MemAcc::createTestMemAccToLLVMPass()";
   let dependentDialects = [
     "MemAcc::MemAccDialect",
     "LLVM::LLVMDialect",
+  ];
+}
+
+def MemAccDummyPass : Pass<"memory-access-dummypass"> {
+  let summary = "Create a dummy pass to pass tiling";
+  let constructor = "mlir::MemAcc::createDummyPass()";
+  let dependentDialects = [
+    "MemAcc::MemAccDialect",
   ];
 }
 
