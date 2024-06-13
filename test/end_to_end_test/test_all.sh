@@ -76,11 +76,11 @@ if [ $# -ne 2 ]; then
     Usage
 fi
 
-# for i in $(ls *.cpp); do
-#     test_memacc_analysis $i $1
-# done
+for i in $(ls *.cpp); do
+    test_memacc_analysis $i $1
+done
 
-test_memacc_analysis rmw.cpp $1
+# test_memacc_analysis rmw.cpp $1
 
 echo "[LOG]: All tests passed"
 if [ $2 == "CLEAN" ]; then
