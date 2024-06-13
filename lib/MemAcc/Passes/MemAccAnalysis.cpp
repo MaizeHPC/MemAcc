@@ -63,7 +63,7 @@ static inline std::optional<arith::AtomicRMWKind> getRMWKind(Operation *op) {
 
 // Gather trace must end with a load op
 void DFS::GatherPath::verification() {
-  if (indirectChain.empty() || !isLoadOp(indirectChain.back())) {
+  if (indirectChain.empty() || !isLoadOp(std::get<0>(indirectChain.back()))) {
     assert(false && "Gather trace must end with a load op\n");
   }
 }
@@ -71,8 +71,15 @@ void DFS::GatherPath::verification() {
 void DFS::GatherPath::print() {
   PRINT("Gather Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
-    PRINT("  " << *op);
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
+    }
   }
   PRINT("External users:");
   for (auto &opToUserPair : deepestLoadToExternUsers) {
@@ -87,8 +94,15 @@ void DFS::GatherPath::print() {
 void DFS::ScatterPath::print() {
   PRINT("Scatter Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
-    PRINT("  " << *op);
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
+    }
   }
   PRINT("Store op value:");
   for (auto &opToValPair : storeOpVals) {
@@ -105,12 +119,22 @@ void DFS::filterGatherPath() {
     auto loadOp = gatherPathPair.first;
     int numUsers = gatherPath.deepestLoadToExternUsers[loadOp].users.size();
     assert(numUsers > 0 && "Gather path must have at least one user\n");
-    auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
-    // if the user is an index cast op and has only one user, remove the gather
-    // path
-    if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) &&
-        numUsers == 1) {
-      gatherPathsToRemove.push_back(loadOp);
+    // auto user = gatherPath.deepestLoadToExternUsers[loadOp].users[0];
+    // // if the user is an index cast op and has only one user, remove the
+    // gather
+    // // path
+    // if ((isa<arith::IndexCastOp>(user) || isa<MemAcc::IndexCastOp>(user)) &&
+    //     numUsers == 1) {
+    //   gatherPathsToRemove.push_back(loadOp);
+    // }
+    // For all scatter path, if the store depends on the load, remove the gather
+    for (auto &scatterPathPair : scatterPaths_) {
+      auto &scatterPath = scatterPathPair.second;
+      for (auto [op, condOp, condBranch] : scatterPath.indirectChain) {
+        if (addressDependencyMap_[op] == loadOp) {
+          gatherPathsToRemove.push_back(loadOp);
+        }
+      }
     }
     // if the result is used as the modifiable value of a RMW op, remove the
     // gather path
@@ -129,8 +153,15 @@ void DFS::filterGatherPath() {
 void DFS::RMWPath::print() {
   PRINT("RMW Path:");
   PRINT("Indirect chain:");
-  for (auto op : indirectChain) {
-    PRINT("  " << *op);
+  for (auto [op, condOp, condBranch] : indirectChain) {
+    if (!condOp) {
+      PRINT("Op  " << *op << " Condition Depends on "
+                   << "None"
+                   << " " << condBranch);
+    } else {
+      PRINT("Op  " << *op << " Condition Depends on " << *condOp << " "
+                   << condBranch);
+    }
   }
   PRINT("RMW ops:");
   for (auto &rmwOpPair : storeToRmwOp) {
@@ -147,9 +178,9 @@ void DFS::RMWPath::print() {
 void DFS::RMWPath::merge(const RMWPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
 
@@ -171,7 +202,7 @@ void DFS::genRMWPath() {
     // check if storeVal is a binary arith op
     if (!isa<arith::ArithDialect>(storeVal.getDefiningOp()->getDialect()) &&
         !isa<MemAcc::MemAccDialect>(storeVal.getDefiningOp()->getDialect())) {
-    //   PRINT("Store value is not an arith op\n");
+      //   PRINT("Store value is not an arith op\n");
       continue;
     }
 
@@ -179,7 +210,7 @@ void DFS::genRMWPath() {
     std::optional<arith::AtomicRMWKind> maybeKind = getRMWKind(arithOp);
 
     if (!maybeKind || arithOp->getNumOperands() != 2) {
-    //   PRINT("Store value is not an add op\n" << *arithOp);
+      //   PRINT("Store value is not an add op\n" << *arithOp);
       continue;
     }
     // auto arithOpKind = arithOp.getKind();
@@ -203,7 +234,7 @@ void DFS::genRMWPath() {
     }
 
     if (loadOpIdx == -1) {
-    //   PRINT("Arith op does not have a load op as one of its operands\n");
+      //   PRINT("Arith op does not have a load op as one of its operands\n");
       continue;
     }
 
@@ -215,12 +246,13 @@ void DFS::genRMWPath() {
     auto loadAddressOffset = addressDependencyMap_[loadOp];
     if (loadAddressOffset != storeAddressOffset ||
         loadOp->getOperand(0) != storeOp->getOperand(1)) {
-    //   PRINT("storeAddressOffset: " << *storeAddressOffset);
-    //   PRINT("loadAddressOffset: " << *loadAddressOffset);
-    //   PRINT("store base address: " << storeOp->getOperand(1));
-    //   PRINT("load base address: " << loadOp->getOperand(0));
-    //   PRINT("Load op does not have the same value as the address offset of the "
-    //         "store op\n");
+      //   PRINT("storeAddressOffset: " << *storeAddressOffset);
+      //   PRINT("loadAddressOffset: " << *loadAddressOffset);
+      //   PRINT("store base address: " << storeOp->getOperand(1));
+      //   PRINT("load base address: " << loadOp->getOperand(0));
+      //   PRINT("Load op does not have the same value as the address offset of
+      //   the "
+      //         "store op\n");
       continue;
     }
 
@@ -251,9 +283,9 @@ void DFS::genRMWPath() {
 void DFS::GatherPath::merge(const GatherPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
 
@@ -295,9 +327,9 @@ void DFS::GatherPath::merge(const GatherPath &other) {
 void DFS::ScatterPath::merge(const ScatterPath &other) {
   // update indirectChain/set
   for (auto op : other.indirectChain) {
-    if (indirectUseSet.count(op) == 0) {
+    if (indirectUseSet.count(std::get<0>(op)) == 0) {
       indirectChain.push_back(op);
-      indirectUseSet.insert(op);
+      indirectUseSet.insert(std::get<0>(op));
     }
   }
   for (auto &opToValPair : other.storeOpVals) {
@@ -313,8 +345,8 @@ void DFS::ScatterPath::merge(const ScatterPath &other) {
 /// Scatter trace must end with a store op
 void DFS::ScatterPath::verification() {
   if (indirectChain.empty() ||
-      (!isa<memref::StoreOp>(indirectChain.back()) &&
-       !isa<affine::AffineStoreOp>(indirectChain.back()))) {
+      (!isa<memref::StoreOp>(std::get<0>(indirectChain.back())) &&
+       !isa<affine::AffineStoreOp>(std::get<0>(indirectChain.back())))) {
     assert(false && "Scatter trace must end with a store op\n");
   }
 }
@@ -343,6 +375,12 @@ void DFS::print_results() {
     PRINT("Op: " << *addressDependency.first
                  << " depends on: " << *addressDependency.second);
   }
+}
+
+bool DFS::isAddressTransformationOp(Operation *op) {
+  return isLoadOp(op) || isStoreOp(op) || isRMWOp(op) ||
+         isa<arith::ArithDialect>(op->getDialect()) ||
+         isa<MemAcc::MemAccDialect>(op->getDialect());
 }
 
 /// Please refer to
@@ -445,7 +483,8 @@ void DFS::solve(Value curr_val, Operation *op, unsigned int depth,
 
   for (auto user : curr_val.getUsers()) {
     if (currIndMap_.count(user) == 0) { // Prevent infinite recursion
-      currIndChain_.push_back(user);
+      auto [condOp, condBranch] = getDependentCondition(user);
+      currIndChain_.push_back(std::make_tuple(user, condOp, condBranch));
       currIndMap_.insert(user);
       solve(curr_val, user, depth,
             addressDependencyOp); // Update curr_val with user->getResult(0)

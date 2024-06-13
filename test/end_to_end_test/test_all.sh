@@ -22,13 +22,16 @@ function test_memacc_analysis() {
     echo "[LOG]: Working on $1 with debug $2"
 
     echo "[LOG]: Converting C/C++ to MLIR using Polygeist"
-    cgeist $1 -raise-scf-to-affine -O0 -S -o $1.mlir -I/usr/include/x86_64-linux-gnu -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/include/linux/
+    cgeist $1 -raise-scf-to-affine -O0 -S -o $1.affine.mlir -I/usr/include/x86_64-linux-gnu -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/include/linux/
     if [ $? -ne 0 ]; then
         abort "failed to convert C/C++ to MLIR"
     fi
 
+    echo "[LOG]: Apply tiling on top of affine loop nest"
+    polygeist-opt $1.affine.mlir -affine-loop-tile="tile-size=2" --canonicalize -o $1.affine.mlir
+
     echo "[LOG]: Capturing indirect memory accesses and hoisting them out of loop (hardware-agnostic)"
-    polygeist-opt $1.mlir --memory-access-hoist-loads  --canonicalize --mlir-disable-threading -o $1.mlir
+    polygeist-opt $1.affine.mlir --memory-access-hoist-loads  --canonicalize --mlir-disable-threading -o $1.mlir
     if [ $? -ne 0 ]; then
         abort "failed to capture indirect memory accesses"
     fi
@@ -76,6 +79,8 @@ fi
 for i in $(ls *.cpp); do
     test_memacc_analysis $i $1
 done
+
+# test_memacc_analysis rmw.cpp $1
 
 echo "[LOG]: All tests passed"
 if [ $2 == "CLEAN" ]; then

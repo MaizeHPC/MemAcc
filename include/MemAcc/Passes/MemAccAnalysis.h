@@ -10,6 +10,8 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Bitcode/LLVMBitCodes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include <tuple>
 #include <iostream>
 
 namespace mlir {
@@ -26,11 +28,16 @@ public:
     llvm::SmallVector<int, 16> operandIdx;
   };
 
+  /// Indirect Chain
+  // each element is a tuple of (load/storeOp, condOp, condBranch)
+  // eg. if (f[i] < 1) a[i] = ... can be represented as (a[i], f[i] < 1, true)
+  typedef llvm::SmallVector<std::tuple<Operation *, Operation *, bool>, 16> IndirectChain;
+
   // Gather path stores the indirect chain from induction variable to several
   // deepest load ops It also records how the result of the deepest load ops are
   // used by other ops for rewriting
   struct GatherPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, GatherUseInfo> deepestLoadToExternUsers;
     unsigned int indirectDepth = 0;
@@ -42,7 +49,7 @@ public:
   // Scatter path stores the indirect chain from induction variable to several
   // deepest store ops It also records the value of the store ops for rewriting
   struct ScatterPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, Value> storeOpVals;
     unsigned int indirectDepth = 0;
@@ -69,7 +76,7 @@ public:
     Value originalLoadResult;
   };
   struct RMWPath {
-    llvm::SmallVector<Operation *, 16> indirectChain;
+    IndirectChain indirectChain;
     llvm::SmallPtrSet<Operation *, 16> indirectUseSet;
     llvm::DenseMap<Operation *, RMWOp> storeToRmwOp;
     void print();
@@ -85,7 +92,7 @@ private:
   // on If it depends on an induction var, return the forOp that generates the
   // induction var
   llvm::DenseMap<Operation *, Operation *> addressDependencyMap_;
-  llvm::SmallVector<Operation *, 16> currIndChain_;
+  IndirectChain currIndChain_;
   llvm::SmallPtrSet<Operation *, 16> currIndMap_;
   GatherPath resultGatherPath_;
   ScatterPath resultScatterPath_;
@@ -95,6 +102,21 @@ private:
              Operation *addressDependencyOp = nullptr);
   void filterGatherPath();
   void genRMWPath();
+  // For any operation, get the dependent condition operation and the branch
+  // If no dependent condition operation is found, return nullptr
+  // Eg. if (f[i] < 1) a[i] = ... can be represented as (a[i], f[i] < 1, true)
+  static std::tuple<Operation*, bool> getDependentCondition(Operation* op){
+    // If the parent of current op is not an scf::if, return nullptr
+    auto parent = op->getParentOfType<scf::IfOp>();
+    if (!parent)
+      return std::make_tuple(nullptr, false);
+
+    // Then, find the condition operation that is dependent on the current op
+    auto condOp = parent.getCondition().getDefiningOp();
+    // Then, find whether current Op is in then or else branch
+    bool condBranch = op->getBlock() == &parent.getThenRegion().front();
+    return std::make_tuple(condOp, condBranch);
+  }
 
 public:
   void print_results();
@@ -104,12 +126,17 @@ public:
 
     // Step1: DFS to find all gather traces and scatter traces
     // For all instructions in forOp's body, solve
-    for (auto &op : forOp.getRegion().front()) {
-      currIndChain_.push_back(&op);
-      currIndMap_.insert(&op);
-      solve(forOp.getInductionVar(), &op, 0, forOp);
-      currIndChain_.pop_back();
-      currIndMap_.erase(&op);
+    for (auto op : forOp.getInductionVar().getUsers()) {
+      if (isAddressTransformationOp(op)){
+        auto [condOp, condBranch] = getDependentCondition(op);
+        currIndChain_.push_back(std::make_tuple(op, condOp, condBranch));
+        currIndMap_.insert(op);
+      }
+      solve(forOp.getInductionVar(), op, 0, forOp);
+      if (isAddressTransformationOp(op)){
+        currIndChain_.pop_back();
+        currIndMap_.erase(op);
+      }
     }
 
     // Step2: generate RMW paths
@@ -122,6 +149,8 @@ public:
       resultScatterPath_.merge(scatterPathsIter->second);
       scatterPathsIter++;
     }
+
+    // print_results();
 
     // Step4: filter out gather paths that are only used for address of scatter
     // paths
@@ -156,6 +185,8 @@ public:
     assert(analysisDone && "Analysis not done yet\n");
     return addressDependencyMap_;
   }
+
+  static bool isAddressTransformationOp(Operation * op);
 };
 
 } // namespace mlir

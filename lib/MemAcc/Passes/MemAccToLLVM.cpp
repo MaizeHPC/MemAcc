@@ -84,10 +84,11 @@ static AffineForOp getTargetForOp(PackedOpType packedOp) {
   for (auto &op : packedOp->getParentRegion()->front()) {
     if (auto forOp = dyn_cast<AffineForOp>(op)) {
       // Check if the store op has the same header of the for op
-      if (isTheSameForOp(packedOp, forOp)) {
-        targetForOp = forOp;
-        break;
-      }
+      // if (isTheSameForOp(packedOp, forOp)) {
+      //   targetForOp = forOp;
+      //   break;
+      // }
+      return forOp;
     }
   }
   return targetForOp;
@@ -187,7 +188,7 @@ class PackedGenericRMWOpLowering
     auto [root, loopSize] = configureLoop(packedRmwOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedRmwOp] = root;
-    for (auto &I : rmwPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : rmwPath.indirectChain) {
       if (isa<MemAcc::LoadOp>(I)) {
         // Get the llvm.ptr op result for load base address
         auto dataPtr = getPtrOpResult(I->getOperand(0), rewriter);
@@ -274,7 +275,7 @@ class PackedGenericStoreOpLowering
     auto [root, loopSize] = configureLoop(packedStoreOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedStoreOp] = root;
-    for (auto &I : scatterPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : scatterPath.indirectChain) {
       // Assert that the address dependency is found and get the dependent MAA
       // inst in a robust way
       if (isa<MemAcc::LoadOp>(I)) {
@@ -359,7 +360,6 @@ class PackedGenericLoadOpLowering
 
     AffineForOp targetForOp = getTargetForOp(packedLoadOp);
     assert(targetForOp && "Target for op not found");
-
     // Get dependency address information and gather path
     DFS dfs;
     dfs.analyzeLoadOps<PackedGenericLoadOp>(packedLoadOp);
@@ -371,15 +371,17 @@ class PackedGenericLoadOpLowering
     auto [root, loopSize] = configureLoop(packedLoadOp, rewriter, loc, maa);
     DenseMap<Operation *, Value> addressDependencyOpToMAAInst;
     addressDependencyOpToMAAInst[packedLoadOp] = root;
-    for (auto &I : gatherPath.indirectChain) {
+    for (auto &[I, condOp, condBranch] : gatherPath.indirectChain) {
       if (isa<MemAcc::LoadOp>(I)) {
         // Get the llvm.ptr op result for load base address
         auto dataPtr = getPtrOpResult(I->getOperand(0), rewriter);
 
         // Assert that the address dependency is found and get the dependent MAA
         // inst in a robust way
+        // PRINT("current I: " << *I << "\n");
         assert(addressDependencyMap.count(I) > 0 &&
                "Address dependency not found");
+        // PRINT("dependent Inst: " << *addressDependencyMap[I] << "\n");
         assert(addressDependencyOpToMAAInst.count(addressDependencyMap[I]) >
                    0 &&
                "MAA dependent Inst not found");
