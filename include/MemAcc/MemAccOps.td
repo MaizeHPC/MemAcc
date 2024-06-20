@@ -290,6 +290,22 @@ def MemAcc_PackedGenericRmwOp : MemAcc_PackedBaseOp<"packed_generic_rmw"> {
 }
 
 //===----------------------------------------------------------------------===//
+// prefetch packed Load ops
+//===----------------------------------------------------------------------===//
+def MemAcc_PrefetchPackedLoadOp : MemAcc_PackedBaseOp<"prefetch_packed_store_ops"> {
+  let summary = "Defines a generic scatter pattern (will be sinked outside of loops)";
+  let description = [{
+    The `MemAcc.prefetchpacked_generic` operation is designed to encapsulate any
+    arbitrary scatter pattern, including stride, indirect, and other
+    patterns. It will be transformed from a `MemAcc.generic_load` operation inside of
+    affine.for. It takes indices array and data array as input, and it will allocate a 
+    scratchpad buffer to rmw the loaded data. 
+
+    Example:TODO: 9Tempest: provide an example
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // LoadOp
 //===----------------------------------------------------------------------===//
 

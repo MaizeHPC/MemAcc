@@ -14,7 +14,7 @@ class DominanceInfo;
 namespace MemAcc {
 std::unique_ptr<Pass> createMemAccHoistLoadsPass();
 
-std::unique_ptr<Pass> createDummyPass();
+std::unique_ptr<Pass> createPrefetchPass();
 // TODO: a test pass lowering memacc to llvm; it should first lower to
 // target-aware IR then to LLVM should fix later
 std::unique_ptr<Pass> createTestMemAccToLLVMPass();

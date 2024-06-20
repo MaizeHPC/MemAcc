@@ -22,9 +22,9 @@ def MemAccToLLVM : Pass<"memory-access-to-llvm"> {
   ];
 }
 
-def MemAccDummyPass : Pass<"memory-access-dummypass"> {
-  let summary = "Create a dummy pass to pass tiling";
-  let constructor = "mlir::MemAcc::createDummyPass()";
+def MemAccPrefetch : Pass<"memory-access-prefetch"> {
+  let summary = "prefetch the next range of data";
+  let constructor = "mlir::MemAcc::createPrefetchPass()";
   let dependentDialects = [
     "MemAcc::MemAccDialect",
   ];

@@ -424,3 +424,124 @@ void AllocSPDOp::getAsmResultNames(
     function_ref<void(Value, StringRef)> setNameFn) {
   setNameFn(getResult(), "alloc_spd");
 }
+
+// TODO:9tempest: Refactor builder for packedops by creating a base class in
+// Ops.h
+//===----------------------------------------------------------------------===//
+// PrefetchPackedLoadOp
+//===----------------------------------------------------------------------===//
+// / 'bodyBuilder' is used to build the body of MemAcc.packed_generic_load If
+// iterArgs and / bodyBuilder are empty/null, we include default terminator op.
+void PrefetchPackedLoadOp::build(OpBuilder &builder, OperationState &result,
+                                ValueRange bufs, ValueRange lbOperands,
+                                AffineMap lbMap, ValueRange ubOperands,
+                                AffineMap ubMap, int64_t step,
+                                ValueRange iterArgs, int64_t indirection_level,
+                                BodyBuilderFn bodyBuilder) {
+  assert(((!lbMap && lbOperands.empty()) ||
+          lbOperands.size() == lbMap.getNumInputs()) &&
+         "lower bound operand count does not match the affine map");
+  assert(((!ubMap && ubOperands.empty()) ||
+          ubOperands.size() == ubMap.getNumInputs()) &&
+         "upper bound operand count does not match the affine map");
+  assert(step > 0 && "step has to be a positive integer constant");
+
+  for (Value val : iterArgs)
+    result.addTypes(val.getType());
+
+  auto indirection_level_attr = IntegerAttr::get(
+      IntegerType::get(builder.getContext(), 64), indirection_level);
+  result.addAttribute(getIndirectionLevelAttrStrName(), indirection_level_attr);
+
+  // Add an attribute for the step.
+  result.addAttribute(getStepAttrStrName(),
+                      builder.getIntegerAttr(builder.getIndexType(), step));
+  // Add the bufs.
+  result.addOperands(bufs);
+
+  // Add the lower bound.
+  result.addAttribute(getLowerBoundAttrStrName(), AffineMapAttr::get(lbMap));
+  result.addOperands(lbOperands);
+
+  // Add the upper bound.
+  result.addAttribute(getUpperBoundAttrStrName(), AffineMapAttr::get(ubMap));
+  result.addOperands(ubOperands);
+
+  result.addOperands(iterArgs);
+
+  result.addAttribute(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({static_cast<int32_t>(bufs.size()),
+                                    static_cast<int32_t>(lbOperands.size()),
+                                    static_cast<int32_t>(ubOperands.size()),
+                                    static_cast<int32_t>(iterArgs.size())}));
+  // Create a region and a block for the body.  The argument of the region is
+  // the loop induction variable.
+  Region *bodyRegion = result.addRegion();
+  bodyRegion->push_back(new Block);
+  Block &bodyBlock = bodyRegion->front();
+  // Value inductionVar =
+  bodyBlock.addArgument(builder.getIndexType(), result.location);
+  for (Value val : iterArgs)
+    bodyBlock.addArgument(val.getType(), val.getLoc());
+
+  // Create the default terminator if the builder is not provided and if the
+  // iteration arguments are not provided. Otherwise, leave this to the caller
+  // because we don't know which values to return from the loop.
+  // if (iterArgs.empty() && !bodyBuilder) {
+  //   ensureTerminator(*bodyRegion, builder, result.location);
+  // } else if (bodyBuilder) {
+  //   OpBuilder::InsertionGuard guard(builder);
+  //   builder.setInsertionPointToStart(&bodyBlock);
+  //   bodyBuilder(builder, result.location, inductionVar,
+  //               bodyBlock.getArguments().drop_front());
+  // }
+}
+
+void PrefetchPackedLoadOp::build(OpBuilder &builder, OperationState &result,
+                                ValueRange bufs, int64_t lb, int64_t ub,
+                                int64_t step, ValueRange iterArgs,
+                                int64_t indirection_level,
+                                BodyBuilderFn bodyBuilder) {
+  auto lbMap = AffineMap::getConstantMap(lb, builder.getContext());
+  auto ubMap = AffineMap::getConstantMap(ub, builder.getContext());
+  return build(builder, result, bufs, {}, lbMap, {}, ubMap, step, iterArgs,
+               indirection_level, bodyBuilder);
+}
+
+std::optional<OpFoldResult> PrefetchPackedLoadOp::getSingleStep() {
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getStepAsAPInt()));
+}
+
+std::optional<OpFoldResult> PrefetchPackedLoadOp::getSingleUpperBound() {
+  if (!hasConstantUpperBound())
+    return std::nullopt;
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getConstantUpperBound()));
+}
+
+SmallVector<Region *> PrefetchPackedLoadOp::getLoopRegions() {
+  return {&getBody()};
+}
+
+std::optional<Value> PrefetchPackedLoadOp::getSingleInductionVar() {
+  return getInductionVar();
+}
+
+std::optional<OpFoldResult> PrefetchPackedLoadOp::getSingleLowerBound() {
+  if (!hasConstantLowerBound())
+    return std::nullopt;
+  OpBuilder b(getContext());
+  return OpFoldResult(b.getI64IntegerAttr(getConstantLowerBound()));
+}
+
+FailureOr<LoopLikeOpInterface> PrefetchPackedLoadOp::replaceWithAdditionalYields(
+    RewriterBase &rewriter, ValueRange newInitOperands,
+    bool replaceInitOperandUsesInLoop,
+    const NewYieldValuesFn &newYieldValuesFn) {
+
+  assert(false && "not implemented");
+  return failure();
+}
+
