@@ -225,16 +225,15 @@ def MemAcc_PackedGenericLoadOp : MemAcc_PackedBaseOp<"packed_generic_load"> {
 
     ```mlir
     affine.for %arg5 = 0 to %1 {
-      // %3 = memacc.generic_load region {
-      //   %5 = memacc.load %arg2[%arg5] : memref<?xi32>
-      //   %6 = memacc.index_cast %5 : i32 to index
-      //   %7 = memacc.load %arg1[%6] : memref<?xf64>
-      //   %8 = memacc.yield %7 : (f64) -> f64
-      // } indirection_level = 1 : () -> f64
 
-      compute(%3)
-      %5 = memacc.load %arg2[%arg5] : memref<?xi32> idx[i]
-      memacc.store %3, %arg0[%5] : memref<?xf64> store a[idx[i]]
+      // gather a[idx[i]]
+      %5 = memref.load %arg2[%arg5] : memref<?xi32>
+      %6 = memref.index_cast %5 : i32 to index
+      %7 = memref.load %arg1[%6] : memref<?xf64>
+
+      compute(%7)
+      %8 = memref.load %arg2[%arg5] : memref<?xi32> idx[i]
+      memref.store %3, %arg0[%8] : memref<?xf64> store a[idx[i]]
     }
     ```
 
